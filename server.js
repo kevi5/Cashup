@@ -75,7 +75,7 @@ class Room {
     this.settings = {
       maxPlayers: 4, map: 'classic', doubleRent: true, vacationCash: true, auction: false,
       noRentInPrison: true, mortgage: false, evenBuild: false, startingCash: 3000, randomOrder: true,
-      moveAfterPrison: true, maxHotels: 1, airportRepeat: false,
+      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false,
     };
     this.chat = [];
     this.timers = new Set();
@@ -169,7 +169,7 @@ class Room {
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
       players: this.players.map((p) => ({
         id: p.id, name: p.name, color: p.color, money: p.money, pos: p.pos, inJail: p.inJail, jailTurns: p.jailTurns,
-        pardons: p.pardons, bankrupt: p.bankrupt, bot: p.bot, connected: p.connected,
+        pardons: p.pardons, bankrupt: p.bankrupt, bot: p.bot, connected: p.connected, skip: !!p.skip,
       })),
       turn: this.phase === 'playing' && this.cur() ? this.cur().id : null,
       tp: this.tp, again: this.again, dice: this.dice, rollId: this.rollId,
@@ -192,7 +192,7 @@ class Room {
     const p = {
       id: crypto.randomBytes(4).toString('hex'), token: crypto.randomBytes(12).toString('hex'),
       name, color, money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0,
-      bankrupt: false, bot: !!bot, connected: true, doubles: 0,
+      bankrupt: false, bot: !!bot, connected: true, doubles: 0, skip: false,
     };
     this.players.push(p);
     if (!this.hostId && !bot) this.hostId = p.id;
@@ -222,7 +222,7 @@ class Room {
       this.mapSeed = ++this.uid;
     }
     if (this.settings.randomOrder) shuffle(this.players);
-    for (const p of this.players) Object.assign(p, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0 });
+    for (const p of this.players) Object.assign(p, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false });
     const keepLog = this.log;
     this.resetGame();
     this.log = keepLog;
@@ -254,7 +254,9 @@ class Room {
       if (dbl) {
         p.inJail = false; p.jailTurns = 0;
         this.say(this.P(p), ' rolled doubles and walked out of prison');
-        return this.leftPrison(p) ? this.moveBy(p, sum) : this.broadcast();
+        // Doubles always get you out and moving, whatever the "move after leaving prison" setting says,
+        // but they never earn the extra roll (`again` stays false).
+        return this.moveBy(p, sum);
       }
       p.jailTurns++;
       if (p.jailTurns >= 3) {
@@ -278,7 +280,8 @@ class Room {
     this.moveBy(p, sum);
   }
 
-  // With "move after leaving prison" off, getting out uses up the turn: the player moves on their next one.
+  // With "move after leaving prison" off, paying or using a pardon uses up the turn: the player moves on their next one.
+  // (Rolling doubles in prison always moves the player; see afterRoll.)
   leftPrison(p) {
     if (this.settings.moveAfterPrison) return true;
     this.again = false;
@@ -367,6 +370,8 @@ class Room {
           this.say(this.P(p), ` went on vacation and collected $${this.pot}`);
           this.pot = 0;
         } else this.say(this.P(p), ' went on vacation');
+        // A vacation costs the player their next turn.
+        if (this.settings.vacationSkip) p.skip = true;
         break;
       case 'prison':
         this.say(this.P(p), ' is just passing by');
@@ -490,9 +495,12 @@ class Room {
     this.auction = null;
     this.again = false;
     let i = this.turnIdx;
-    for (let k = 0; k < this.players.length; k++) {
+    for (let k = 0; k < this.players.length * 2 + 1; k++) {
       i = (i + 1) % this.players.length;
-      if (!this.players[i].bankrupt) break;
+      const q = this.players[i];
+      if (q.bankrupt) continue;
+      if (q.skip) { q.skip = false; this.say(this.P(q), ' is on vacation and skips this turn'); continue; }
+      break;
     }
     this.turnIdx = i;
     this.tp = 'roll';
@@ -720,7 +728,7 @@ class Room {
       case 'setting': {
         if (!host || this.phase !== 'lobby') return;
         const s = this.settings, v = m.value;
-        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat'];
+        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'vacationSkip'];
         if (bools.includes(m.key)) s[m.key] = !!v;
         else if (m.key === 'maxPlayers' && Number.isInteger(v) && v >= 2 && v <= 8 && v >= this.players.length) s.maxPlayers = v;
         else if (m.key === 'startingCash' && [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000].includes(v)) s.startingCash = v;
@@ -767,7 +775,7 @@ class Room {
         this.resetGame();
         this.players = this.players.filter((x) => x.bot || x.connected);
         this.fixHost();
-        for (const x of this.players) Object.assign(x, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0 });
+        for (const x of this.players) Object.assign(x, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false });
         return this.broadcast();
     }
 

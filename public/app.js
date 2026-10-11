@@ -541,7 +541,7 @@ function renderPlayers() {
     row.className = `prow${p.id === myId ? ' me' : ''}${S.turn === p.id ? ' turn' : ''}${p.bankrupt ? ' out' : ''}${p.connected ? '' : ' off'}`;
     row.style.setProperty('--pc', p.color);
     const tags = `${p.bot ? `<span class="tag" title="Bot">${I.bot}</span>` : ''}${p.id === S.hostId ? `<span class="tag host">${I.crown}${lobby ? ' Host' : ''}</span>` : ''}`
-      + `${p.inJail ? `<span class="tag" title="In prison">${I.lock}</span>` : ''}${p.pardons ? `<span class="tag" title="Pardon card">${I.ticket}</span>` : ''}${!p.connected && !p.bot ? '<span class="tag">offline</span>' : ''}`;
+      + `${p.inJail ? `<span class="tag" title="In prison">${I.lock}</span>` : ''}${p.skip ? '<span class="tag" title="On vacation: skips the next turn">🏝️</span>' : ''}${p.pardons ? `<span class="tag" title="Pardon card">${I.ticket}</span>` : ''}${!p.connected && !p.bot ? '<span class="tag">offline</span>' : ''}`;
     let html = `<div class="ptok">${tokenSVG(p.color)}</div><div class="pname"><span>${esc(p.name)}</span>${tags}`;
     if (lobby && p.id === myId) html += `<br><button class="appearance" data-act="pick">${I.palette} Change appearance</button>`;
     html += '</div>';
@@ -576,10 +576,11 @@ function settingsHTML() {
     <h3>Gameplay rules</h3>
     ${tog('doubleRent', '🪙', 'x2 rent on full-set properties', 'If a player owns a full property set, the base rent payment will be doubled')}
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
+    ${'vacationSkip' in s ? tog('vacationSkip', '⏭️', 'Vacation skips a turn', 'A player who lands on Vacation misses their next turn') : ''}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
     ${tog('mortgage', '🏦', 'Mortgage', "Mortgage a property for its sell value (50%). It earns no rent, and if you don't lift the mortgage within 5 of your turns it goes back to the bank")}
-    ${'moveAfterPrison' in s ? tog('moveAfterPrison', '🚪', 'Move after leaving prison', 'When on, you roll and move on the turn you get out. When off, getting out ends your turn and you move on your next one') : ''}
+    ${'moveAfterPrison' in s ? tog('moveAfterPrison', '🚪', 'Move after paying out of prison', 'When on, you roll and move on the turn you pay or use a pardon card. When off, that ends your turn and you move on your next one. Rolling doubles always gets you out and moving, with no extra roll') : ''}
     ${'airportRepeat' in s ? tog('airportRepeat', '✈️', 'Airport rent grows per landing', 'When off, airport rent doubles with each airport the owner holds. When on, each airport starts at $25 and doubles every time someone lands on it (up to $3200)') : ''}
     ${'maxHotels' in s ? `<div class="srow"><span class="ico">🏨</span><div><b>Hotels per property</b><small>How many hotels can be stacked on one city after its four houses. Two pay 1.5× the hotel rent, three pay 2×</small></div>${sel('maxHotels', [1, 2, 3], (o) => o)}</div>` : ''}
     ${tog('evenBuild', '🏘️', 'Even build', 'Houses and hotels must be built up and sold off evenly within a property set')}
@@ -777,7 +778,8 @@ function renderModal() {
       <li>Passing Start pays $200, landing exactly on it pays $300.</li>
       <li>Own all cities of a country to build houses and a hotel — open the property card on your turn and press the up arrow.</li>
       <li>Short on cash? Sell buildings, mortgage or sell properties, or strike a deal in Trades.</li>
-      <li>In prison: pay $50, use a pardon card, or roll doubles. After three tries you pay and move.</li>
+      <li>In prison: pay $50, use a pardon card, or roll doubles. Doubles get you out and moving straight away, without the usual extra roll. After three tries you pay. Whether you move on the turn you pay is a room setting.</li>
+      <li>Landing on Vacation collects the cash pot, and (unless the room turns it off) you skip your next turn.</li>
       <li>The last player who is not bankrupt wins.</li></ul>
       <p style="color:var(--muted);font-size:13px">Some sound effects from <a class="link" href="https://notificationsounds.com" target="_blank" rel="noopener">notificationsounds.com</a>, Creative Commons Attribution. See <a class="link" href="/sounds/CREDITS.md" target="_blank">credits</a>.</p></div>`;
   } else if (modal.type === 'confirm') {
