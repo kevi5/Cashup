@@ -32,7 +32,7 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Starting cash | $3000 | $500 to $10,000 |
 | x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
-| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. Turns end automatically. A player in debt has their least useful holdings sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties |
+| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. A player in debt gets 10 seconds to sell something themselves, then their least useful holdings are sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties |
 | Auction | Off | A property nobody buys goes to the highest bidder |
 | No rent while in prison | On | Owners in prison collect nothing |
 | Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |

@@ -28,6 +28,8 @@ const BOT_B = ['Baron', 'Tycoon', 'Banker', 'Mogul', 'Broker', 'Investor', 'Land
 const JAIL_FEE = 50;
 // A mortgage pays the sell value up front; if it is not lifted within this many of the owner's turns, the bank takes the property.
 const MORTGAGE_TURNS = 5;
+// Fast game: how long a player in debt has to sell something themselves before the game does it for them.
+const DEBT_GRACE = 10000;
 const PASS_START = 200;
 const LAND_START = 300;
 
@@ -172,7 +174,8 @@ class Room {
   // ---------- state sync ----------
   state() {
     return {
-      seq: ++this.seq, ver: 4, build: BUILD,
+      seq: ++this.seq, ver: 5, build: BUILD,
+      debt: this.debt ? { pid: this.debt.pid, endsIn: Math.max(0, this.debt.endsAt - Date.now()) } : null,
       code: this.code, hostId: this.hostId, phase: this.phase, settings: this.settings,
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
       players: this.players.map((p) => ({
@@ -190,15 +193,18 @@ class Room {
 
   broadcast() {
     this.lastActive = Date.now();
-    // Fast game: whenever the player to act is in debt, settle it before anyone sees the state.
-    if (this.phase === 'playing' && this.settings.fastGame && (this.tp === 'roll' || this.tp === 'end')) this.autoSell(this.cur());
-    // Fast game: a finished turn passes on by itself after a moment, unless the player is still in debt.
-    if (this.phase === 'playing' && this.settings.fastGame && this.tp === 'end' && this.autoEndEpoch !== this.epoch) {
-      const p = this.cur();
-      if (p && !p.bankrupt && p.money >= 0) {
-        this.autoEndEpoch = this.epoch;
-        this.after(1200, () => { if (this.phase === 'playing' && this.tp === 'end' && this.cur() === p && p.money >= 0) this.nextTurn(); });
-      }
+    // Fast game: a player to act who is in debt gets DEBT_GRACE ms to sell something themselves;
+    // after that their least useful holdings are sold for them.
+    const p = this.phase === 'playing' && this.settings.fastGame && (this.tp === 'roll' || this.tp === 'end') ? this.cur() : null;
+    const owes = p && !p.bankrupt && p.money < 0 && this.propsOf(p).some((i) => !this.owned[i].mortgaged || this.owned[i].houses > 0);
+    if (!owes) this.debt = null;
+    else if (!this.debt || this.debt.pid !== p.id) {
+      const debt = this.debt = { pid: p.id, endsAt: Date.now() + DEBT_GRACE / SPEED };
+      this.after(DEBT_GRACE, () => {
+        if (this.debt !== debt) return;
+        this.debt = null;
+        if (this.cur() === p && p.money < 0) { this.autoSell(p); this.broadcast(); }
+      });
     }
     const st = this.state();
     for (const c of this.clients) send(c.ws, { type: 'state', state: st, you: c.player ? c.player.id : null });
@@ -582,6 +588,7 @@ class Room {
     this.epoch++;
     const c = this.cur();
     if (c) c.doubles = 0;
+    this.debt = null;
     // Count down the mortgages of the player whose turn just ended; expired ones return to the bank.
     if (c && !c.bankrupt) {
       for (const i of this.propsOf(c)) {

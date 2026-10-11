@@ -448,3 +448,6 @@ button.chip:hover { border-color: rgba(255, 255, 255, .3); }
 /* settings that only matter when the setting above them is on */
 .srow.sub { margin-top: -6px; }
 .srow.sub.off { opacity: .4; }
+
+/* fast game: time left to sell by hand */
+.debtbar { width: 260px; margin: 8px auto 0; }

@@ -468,7 +468,11 @@ function centerHTML() {
   if (S.phase === 'over' || !cur) return '';
   if (S.tp === 'auction' && S.auction) return auctionHTML();
   if (S.turn !== myId) return `<div class="status">${dot(cur)} <b>${esc(cur.name)}</b> is playing...</div>`;
-  const debt = m.money < 0 ? '<div class="hint">You are in debt. Sell or mortgage properties, or declare bankruptcy.</div>' : '';
+  // Fast game gives a short window to sell by hand before the game sells for you; the bar shows the time left.
+  const grace = S.debt && S.debt.pid === myId;
+  const debt = m.money < 0 ? (grace
+    ? `<div class="hint">You are in debt. Sell something yourself in the next few seconds, or the game sells your least useful properties for you.<div class="au-bar debtbar"><i style="animation-duration:${S.debt.endsIn}ms"></i></div></div>`
+    : '<div class="hint">You are in debt. Sell or mortgage properties, or declare bankruptcy.</div>') : '';
   if (S.tp === 'roll') {
     let h = '';
     if (m.inJail) {
@@ -482,8 +486,6 @@ function centerHTML() {
     const skip = S.settings.auction ? `${I.gavel} Auction` : S.again ? `${I.x} Skip` : `${I.check} End turn`;
     return `<button class="btn" data-act="skip">${skip}</button><button class="btn" data-act="buy" ${m.money < t.price ? 'disabled' : ''}>${I.cart} Buy for $${t.price}</button>`;
   }
-  // Fast game on a server that ends turns itself (ver 4+): no button unless the player is stuck in debt.
-  if (S.tp === 'end' && S.settings.fastGame && S.ver >= 4 && m.money >= 0) return '<div class="status" style="color:var(--muted)">Ending your turn…</div>';
   if (S.tp === 'end') return `<button class="btn" data-act="endTurn" ${m.money < 0 ? 'disabled' : ''}>${I.check} End turn</button>${debt}`;
   return '';
 }
@@ -561,7 +563,7 @@ function settingsHTML() {
     <h3>Gameplay rules</h3>
     ${tog('doubleRent', '🪙', 'x2 rent on full-set properties', 'If a player owns a full property set, the base rent payment will be doubled')}
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
-    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. Your turn ends automatically, and if you run out of cash your least useful properties are sold automatically') : ''}
+    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. If you run out of cash you get 10 seconds to sell something yourself, then your least useful properties are sold automatically') : ''}
     ${'vacationSkip' in s ? tog('vacationSkip', '⏭️', 'Vacation skips a turn', 'A player who lands on Vacation misses their next turn') : ''}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
