@@ -23,6 +23,8 @@ const COLORS = [...BASE_COLORS, ...SKIN_COLORS];
 const BOT_A = ['Sneaky', 'Lucky', 'Greedy', 'Jolly', 'Witty', 'Bold', 'Thrifty', 'Fancy', 'Shady', 'Mighty', 'Clever', 'Dizzy'];
 const BOT_B = ['Baron', 'Tycoon', 'Banker', 'Mogul', 'Broker', 'Investor', 'Landlord', 'Dealer', 'Magnate', 'Trader', 'Duke', 'Fox'];
 const JAIL_FEE = 50;
+// A mortgage pays the sell value up front; if it is not lifted within this many of the owner's turns, the bank takes the property.
+const MORTGAGE_TURNS = 5;
 const PASS_START = 200;
 const LAND_START = 300;
 
@@ -73,6 +75,7 @@ class Room {
     this.settings = {
       maxPlayers: 4, map: 'classic', doubleRent: true, vacationCash: true, auction: false,
       noRentInPrison: true, mortgage: false, evenBuild: false, startingCash: 3000, randomOrder: true,
+      moveAfterPrison: true,
     };
     this.chat = [];
     this.timers = new Set();
@@ -251,14 +254,14 @@ class Room {
       if (dbl) {
         p.inJail = false; p.jailTurns = 0;
         this.say(this.P(p), ' rolled doubles and walked out of prison');
-        return this.moveBy(p, sum);
+        return this.leftPrison(p) ? this.moveBy(p, sum) : this.broadcast();
       }
       p.jailTurns++;
       if (p.jailTurns >= 3) {
         p.inJail = false; p.jailTurns = 0;
         this.pay(p, JAIL_FEE, null);
         this.say(this.P(p), ` paid $${JAIL_FEE} to get out of prison`);
-        return this.moveBy(p, sum);
+        return this.leftPrison(p) ? this.moveBy(p, sum) : this.broadcast();
       }
       this.say(this.P(p), ' failed to roll doubles and stays in prison');
       this.tp = 'end';
@@ -273,6 +276,23 @@ class Room {
       this.again = true;
     }
     this.moveBy(p, sum);
+  }
+
+  // With "move after leaving prison" off, getting out uses up the turn: the player moves on their next one.
+  leftPrison(p) {
+    if (this.settings.moveAfterPrison) return true;
+    this.again = false;
+    this.tp = 'end';
+    return false;
+  }
+
+  // Announce a set the moment one player holds all of it.
+  noteSet(p, i) {
+    const set = this.setOf(i);
+    if (set.length < 2 || !this.ownsSet(p.id, i)) return;
+    const parts = [this.P(p), ' completed a set: '];
+    set.forEach((j, k) => { if (k) parts.push(', '); parts.push(this.TL(j)); });
+    this.say(...parts);
   }
 
   moveBy(p, steps) {
@@ -411,6 +431,7 @@ class Room {
     p.money -= t.price;
     this.owned[p.pos] = { owner: p.id, houses: 0, mortgaged: false };
     this.say(this.P(p), ' bought ', this.TL(p.pos));
+    this.noteSet(p, p.pos);
     this.finish(p);
   }
 
@@ -432,6 +453,7 @@ class Room {
         w.money -= a.bid;
         this.owned[a.tile] = { owner: w.id, houses: 0, mortgaged: false };
         this.say(this.P(w), ' won the auction for ', this.TL(a.tile), ` with $${a.bid}`);
+        this.noteSet(w, a.tile);
       } else this.say('Nobody bid on ', this.TL(a.tile));
       this.auction = null;
       this.finish(this.cur());
@@ -452,6 +474,17 @@ class Room {
     this.epoch++;
     const c = this.cur();
     if (c) c.doubles = 0;
+    // Count down the mortgages of the player whose turn just ended; expired ones return to the bank.
+    if (c && !c.bankrupt) {
+      for (const i of this.propsOf(c)) {
+        const o = this.owned[i];
+        if (!o.mortgaged || o.mortgageTurns === undefined) continue;
+        if (--o.mortgageTurns <= 0) {
+          delete this.owned[i];
+          this.say('The mortgage on ', this.TL(i), ' ran out: ', this.P(c), ' lost it to the bank');
+        }
+      }
+    }
     this.auction = null;
     this.again = false;
     let i = this.turnIdx;
@@ -514,14 +547,14 @@ class Room {
         if (!this.settings.mortgage) return this.err(client, 'Mortgage is disabled in this room');
         if (o.mortgaged) return;
         if (Math.max(...setHouses) > 0) return this.err(client, 'Sell the buildings in this set first');
-        o.mortgaged = true; p.money += t.price / 2;
-        this.say(this.P(p), ' mortgaged ', this.TL(i));
+        o.mortgaged = true; o.mortgageTurns = MORTGAGE_TURNS; p.money += t.price / 2;
+        this.say(this.P(p), ' mortgaged ', this.TL(i), ` for $${t.price / 2}`);
         break;
       case 'unmortgage': {
         if (!o.mortgaged) return;
         const fee = Math.round(t.price * 0.55);
         if (p.money < fee) return this.err(client, 'Not enough money');
-        o.mortgaged = false; p.money -= fee;
+        o.mortgaged = false; delete o.mortgageTurns; p.money -= fee;
         this.say(this.P(p), ' unmortgaged ', this.TL(i));
         break;
       }
@@ -554,6 +587,13 @@ class Room {
     for (const i of tr.get.props) this.owned[i].owner = a.id;
     this.trades = this.trades.filter((t) => t !== tr);
     this.say(this.P(b), ' accepted a trade with ', this.P(a));
+    const seen = new Set();
+    for (const [who, props] of [[b, tr.give.props], [a, tr.get.props]]) {
+      for (const i of props) {
+        const key = this.setOf(i).join();
+        if (!seen.has(key)) { seen.add(key); this.noteSet(who, i); }
+      }
+    }
     this.trades = this.trades.filter((t) => this.validTrade(t));
   }
 
@@ -575,7 +615,7 @@ class Room {
       if (withHouse !== undefined) { this.owned[withHouse].houses--; p.money += houseCost(this.tiles[withHouse].price) / 2; continue; }
       const free = mine.filter((i) => !this.owned[i].mortgaged).sort((x, y) => this.tiles[x].price - this.tiles[y].price)[0];
       if (free === undefined) break;
-      if (this.settings.mortgage) { this.owned[free].mortgaged = true; p.money += this.tiles[free].price / 2; this.say(this.P(p), ' mortgaged ', this.TL(free)); }
+      if (this.settings.mortgage) { this.owned[free].mortgaged = true; this.owned[free].mortgageTurns = MORTGAGE_TURNS; p.money += this.tiles[free].price / 2; this.say(this.P(p), ' mortgaged ', this.TL(free)); }
       else { delete this.owned[free]; p.money += this.tiles[free].price / 2; this.say(this.P(p), ' sold ', this.TL(free)); }
     }
     return p.money >= 0;
@@ -624,8 +664,10 @@ class Room {
     if (!p || !p.bot || p.bankrupt) return;
     if (this.tp === 'roll') {
       if (p.money < 0 && !this.raiseFunds(p)) return this.bankrupt(p);
+      const jailed = p.inJail;
       if (p.inJail && p.pardons > 0) { p.pardons--; p.inJail = false; p.jailTurns = 0; this.say(this.P(p), ' used a pardon card'); }
       else if (p.inJail && p.money > 500) { this.pay(p, JAIL_FEE, null); p.inJail = false; p.jailTurns = 0; this.say(this.P(p), ` paid $${JAIL_FEE} to get out of prison`); }
+      if (jailed && !p.inJail && !this.leftPrison(p)) return this.broadcast();
       this.botBuild(p);
       return this.roll(p);
     }
@@ -636,6 +678,10 @@ class Room {
     }
     if (this.tp === 'end') {
       if (p.money < 0 && !this.raiseFunds(p)) return this.bankrupt(p);
+      for (const i of this.propsOf(p)) {
+        const o = this.owned[i], fee = Math.round(this.tiles[i].price * 0.55);
+        if (o.mortgaged && p.money - fee >= 300) { o.mortgaged = false; delete o.mortgageTurns; p.money -= fee; this.say(this.P(p), ' unmortgaged ', this.TL(i)); }
+      }
       this.botBuild(p);
       return this.nextTurn();
     }
@@ -672,7 +718,7 @@ class Room {
       case 'setting': {
         if (!host || this.phase !== 'lobby') return;
         const s = this.settings, v = m.value;
-        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder'];
+        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison'];
         if (bools.includes(m.key)) s[m.key] = !!v;
         else if (m.key === 'maxPlayers' && Number.isInteger(v) && v >= 2 && v <= 8 && v >= this.players.length) s.maxPlayers = v;
         else if (m.key === 'startingCash' && [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000].includes(v)) s.startingCash = v;
@@ -727,11 +773,13 @@ class Room {
         if (p.money < JAIL_FEE) return this.err(client, 'Not enough money');
         this.pay(p, JAIL_FEE, null); p.inJail = false; p.jailTurns = 0;
         this.say(this.P(p), ` paid $${JAIL_FEE} to get out of prison`);
+        this.leftPrison(p);
         return this.broadcast();
       case 'usePardon':
         if (!myTurn || this.tp !== 'roll' || !p.inJail || p.pardons < 1) return;
         p.pardons--; p.inJail = false; p.jailTurns = 0;
         this.say(this.P(p), ' used a pardon card');
+        this.leftPrison(p);
         return this.broadcast();
       case 'buy':
         if (!myTurn || this.tp !== 'buy') return;

@@ -66,6 +66,7 @@ const SYNTH = {
   bid() { knock(0, 520, 0.09); },
   mortgage() { pluck(330, 0, 0.3, 0.07); pluck(247, 0.12, 0.45, 0.07); },
   unmortgage() { pluck(247, 0, 0.3, 0.07); pluck(330, 0.12, 0.45, 0.07); },
+  set() { [523, 659, 784, 1047, 1319].forEach((f, i) => pluck(f, i * 0.08, 0.5, 0.09)); pluck(1568, 0.45, 0.8, 0.07); },
 };
 function sfx(name) {
   if (muted()) return;
@@ -264,7 +265,7 @@ function tileHTML(t) {
     case 'refund': return `<div class="label v">${esc(t.name)}</div><div class="icon">💵</div><div class="sub v">$${t.amount}</div>`;
     case 'start': return '<b>START</b><div class="arrows">▶▶</div>';
     case 'prison': return '<div class="pass">Passing by</div><div class="cell">In Prison</div>';
-    case 'vacation': return '<div class="icon">🏝️</div>Vacation';
+    case 'vacation': return '<div class="icon">🏝️</div>Vacation<div class="pot" hidden></div>';
     case 'gotoprison': return '<div class="icon">☠️</div>Go to prison';
     default: return '';
   }
@@ -299,6 +300,7 @@ function buildBoard() {
   fitNames();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitNames);
   for (const k of Object.keys(cache)) if (k.startsWith('tile')) delete cache[k];
+  delete cache.pot;
   for (const id of Object.keys(tokEls)) { tokEls[id].remove(); delete tokEls[id]; }
   openProp = null;
 }
@@ -341,7 +343,7 @@ function renderBoard() {
     if (t.price) {
       const o = S.owned[i], owner = o && pl(o.owner);
       const rent = owner ? currentRent(i) : '';
-      const key = owner ? `${owner.color}|${o.houses}|${o.mortgaged}|${rent}` : '';
+      const key = owner ? `${owner.color}|${o.houses}|${o.mortgaged}|${o.mortgageTurns}|${rent}` : '';
       if (cache[`tile${i}`] !== key) {
         cache[`tile${i}`] = key;
         el.classList.toggle('owned', !!owner);
@@ -350,8 +352,18 @@ function renderBoard() {
         if (owner) {
           el.style.setProperty('--owner', owner.color);
           const b = o.houses === 5 ? '🏨' : o.houses ? `🏠${o.houses}` : '';
-          pe.innerHTML = `<span class="rl">${o.mortgaged ? '<span class="bld">🔒</span>' : `${b ? `<span class="bld">${b}</span>` : ''}<span class="rent">${rent}</span>`}</span>`;
+          pe.innerHTML = `<span class="rl">${o.mortgaged ? `<span class="bld">🔒</span>${o.mortgageTurns ? `<span class="rent" title="Turns left to lift the mortgage">${o.mortgageTurns}</span>` : ''}` : `${b ? `<span class="bld">${b}</span>` : ''}<span class="rent">${rent}</span>`}</span>`;
         } else pe.innerHTML = money(t.price);
+      }
+    }
+    if (t.type === 'vacation') {
+      // With vacation cash on, show what is waiting in the pot.
+      const pot = el.querySelector('.pot'), show = !!S.settings.vacationCash, txt = show ? String(S.pot) : '';
+      if (pot && cache.pot !== txt) {
+        if (cache.pot !== undefined && show) { pot.classList.remove('bump'); void pot.offsetWidth; pot.classList.add('bump'); }
+        cache.pot = txt;
+        pot.hidden = !show;
+        pot.innerHTML = show ? `💰 ${money(S.pot)}` : '';
       }
     }
     // After a move, the tile the current player stands on glows in that player's colour.
@@ -437,21 +449,52 @@ function renderTokens(first) {
 }
 
 // ---------- dice ----------
-const diceTimers = [null, null];
+// Dice: a thrown-die feel built only from flat transforms (no 3D layers, which made the page flicker).
+// Each die arcs in from its side, bounces twice with a little squash, spins down to rest, and "tumbles"
+// by squashing flat and showing a new face, quickly at first and then slower until it lands on the result.
+const diceTimers = [[], []];
+const FLIPS = [0, 75, 155, 245, 345, 460, 600];
+const DICE_MS = 940;
 function setDice(d, animate) {
   d.forEach((v, i) => {
-    const cube = $(`#cube${i}`), face = cube.firstChild;
-    clearInterval(diceTimers[i]);
-    if (!animate) { face.innerHTML = faceHTML(v); cube.style.transform = `rotate(${i ? 4 : -5}deg)`; return; }
-    const die = cube.parentNode;
-    die.classList.remove('rolling'); void die.offsetWidth; die.classList.add('rolling');
-    let n = 0;
-    diceTimers[i] = setInterval(() => {
-      if (++n < 9) { face.innerHTML = faceHTML(1 + rnd(6)); return; }
-      clearInterval(diceTimers[i]);
+    const cube = $(`#cube${i}`), face = cube.firstChild, die = cube.parentNode, shadow = die.parentNode.querySelector('.dshadow');
+    for (const t of diceTimers[i]) clearTimeout(t);
+    diceTimers[i] = [];
+    if (die.getAnimations) for (const el of [die, cube, face, shadow]) for (const an of el.getAnimations()) an.cancel();
+    const rest = animate ? rnd(15) - 7 : (i ? 4 : -5);
+    cube.style.transform = `rotate(${rest}deg)`;
+    if (!animate || !die.animate) { face.innerHTML = faceHTML(v); return; }
+    const dir = i ? 1 : -1, delay = i * 55, spin = dir * (500 + rnd(220));
+    const opts = { duration: DICE_MS, delay, fill: 'backwards' };
+    die.animate([
+      { transform: `translate(${dir * 78}px, -104px) scale(1.16)`, offset: 0, easing: 'cubic-bezier(.45, 0, .9, .55)' },
+      { transform: `translate(${dir * 22}px, 4px) scale(1.1, .86)`, offset: 0.36, easing: 'cubic-bezier(.15, .6, .4, 1)' },
+      { transform: `translate(${dir * 10}px, -40px) scale(.98, 1.03)`, offset: 0.55, easing: 'cubic-bezier(.5, 0, .9, .6)' },
+      { transform: `translate(${dir * 3}px, 2px) scale(1.06, .93)`, offset: 0.73, easing: 'cubic-bezier(.2, .6, .4, 1)' },
+      { transform: 'translate(0, -10px) scale(1)', offset: 0.85, easing: 'ease-in' },
+      { transform: 'translate(0, 1px) scale(1.02, .98)', offset: 0.95 },
+      { transform: 'translate(0, 0) scale(1)', offset: 1 },
+    ], opts);
+    cube.animate([{ transform: `rotate(${spin}deg)` }, { transform: `rotate(${rest}deg)` }], { ...opts, easing: 'cubic-bezier(.12, .62, .22, 1)' });
+    // The shadow stays on the table: small and faint while the die is in the air, full when it lands.
+    shadow.animate([
+      { transform: `translateX(${dir * 78}px) scale(.45)`, opacity: 0.15, offset: 0 },
+      { transform: `translateX(${dir * 22}px) scale(1.08)`, opacity: 1, offset: 0.36 },
+      { transform: `translateX(${dir * 10}px) scale(.72)`, opacity: 0.5, offset: 0.55 },
+      { transform: `translateX(${dir * 3}px) scale(1.04)`, opacity: 1, offset: 0.73 },
+      { transform: 'translateX(0) scale(.9)', opacity: 0.8, offset: 0.85 },
+      { transform: 'translateX(0) scale(1)', opacity: 1, offset: 1 },
+    ], opts);
+    FLIPS.forEach((t, k) => diceTimers[i].push(setTimeout(() => {
+      const last = k === FLIPS.length - 1, dur = 80 + k * 16;
+      face.animate([{ transform: 'scale(1)' }, { transform: k % 2 ? 'scale(.1, 1.04)' : 'scale(1.04, .1)' }, { transform: 'scale(1)' }], { duration: dur, easing: 'ease-in-out' });
+      diceTimers[i].push(setTimeout(() => { face.innerHTML = faceHTML(last ? v : 1 + rnd(6)); }, dur / 2));
+    }, t + delay)));
+    // Safety net (e.g. a throttled background tab): always end on the rolled value, then a small landing pop.
+    diceTimers[i].push(setTimeout(() => {
       face.innerHTML = faceHTML(v);
-      cube.style.transform = `rotate(${rnd(13) - 6}deg)`;
-    }, 90);
+      cube.animate([{ transform: `rotate(${rest}deg) scale(1.13)` }, { transform: `rotate(${rest}deg) scale(1)` }], { duration: 240, easing: 'cubic-bezier(.2, .8, .3, 1)' });
+    }, DICE_MS + delay));
   });
 }
 function renderDice(first) {
@@ -574,7 +617,8 @@ function settingsHTML() {
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
-    ${tog('mortgage', '🏦', 'Mortgage', "Mortgage properties to earn 50% of their cost, but you won't get paid rent when players land on them")}
+    ${tog('mortgage', '🏦', 'Mortgage', "Mortgage a property for its sell value (50%). It earns no rent, and if you don't lift the mortgage within 5 of your turns it goes back to the bank")}
+    ${'moveAfterPrison' in s ? tog('moveAfterPrison', '🚪', 'Move after leaving prison', 'When on, you roll and move on the turn you get out. When off, getting out ends your turn and you move on your next one') : ''}
     ${tog('evenBuild', '🏘️', 'Even build', 'Houses and hotels must be built up and sold off evenly within a property set')}
     <div class="srow"><span class="ico">💰</span><div><b>Starting cash</b><small>Adjust how much money players start the game with</small></div>${sel('startingCash', [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000], (o) => `$${o}`)}</div>
     ${tog('randomOrder', '🔀', 'Randomize player order', 'Randomly reorder players at the beginning of the game')}
@@ -596,7 +640,7 @@ function gameSideHTML() {
     const mine = TILES.filter((t) => S.owned[t.i] && S.owned[t.i].owner === myId);
     h += `<div class="panel myprops"><div class="ptitle">My properties (${mine.length})</div>${mine.map((t) => {
       const o = S.owned[t.i];
-      return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}<span class="h">${o.mortgaged ? '🔒' : o.houses === 5 ? '🏨' : '🏠'.repeat(o.houses)}</span><span class="rent">${currentRent(t.i)}</span></button>`;
+      return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}${canBuild(t.i) ? `<span class="canb" title="You can build here">${I.up}</span>` : ''}<span class="h">${o.mortgaged ? `🔒${o.mortgageTurns || ''}` : o.houses === 5 ? '🏨' : '🏠'.repeat(o.houses)}</span><span class="rent">${currentRent(t.i)}</span></button>`;
     }).join('') || '<div class="empty">Nothing yet</div>'}</div>`;
   }
   return h;
@@ -676,6 +720,17 @@ function renderCard() {
   cardTimer = setTimeout(() => { el.hidden = true; }, 6000);
 }
 
+// True when you could buy a house or hotel on this property right now (mirrors the server's checks).
+function canBuild(i) {
+  const t = TILES[i], o = S.owned[i], m = me();
+  if (!m || !o || o.owner !== myId || t.type !== 'city' || S.phase !== 'playing' || S.turn !== myId || S.tp === 'busy') return false;
+  const set = TILES.filter((x) => x.type === 'city' && x.cc === t.cc);
+  if (!set.every((x) => S.owned[x.i] && S.owned[x.i].owner === myId && !S.owned[x.i].mortgaged)) return false;
+  if (o.houses >= 5) return false;
+  if (S.settings.evenBuild && o.houses > Math.min(...set.map((x) => S.owned[x.i].houses))) return false;
+  return m.money >= houseCost(t.price);
+}
+
 function propHTML(i) {
   const t = TILES[i], o = S.owned[i], owner = o && pl(o.owner), m = me();
   const row = (label, val, on) => `<tr class="${on ? 'on' : ''}"><td>${label}</td><td>${val}</td></tr>`;
@@ -694,15 +749,15 @@ function propHTML(i) {
   if (owner && m && owner.id === myId && S.turn === myId && S.phase === 'playing') {
     const hc = t.type === 'city' ? houseCost(t.price) : 0;
     btns = '<div class="pc-btns">'
-      + (t.type === 'city' ? `<button class="btn soft" data-act="mg" data-kind="build" data-tile="${i}" title="Build ($${hc})">${I.up}</button><button class="btn soft" data-act="mg" data-kind="sellHouse" data-tile="${i}" title="Sell a building (+$${hc / 2})" ${o.houses ? '' : 'disabled'}>${I.down}</button>` : '')
+      + (t.type === 'city' ? `<button class="btn ${canBuild(i) ? 'go' : 'soft'}" data-act="mg" data-kind="build" data-tile="${i}" title="${canBuild(i) ? `Build a ${o.houses === 4 ? 'hotel' : 'house'} for $${hc}` : `Build ($${hc}): needs the full set, enough cash${S.settings.evenBuild ? ', and even building' : ''}`}" ${canBuild(i) ? '' : 'disabled'}>${I.up}</button><button class="btn soft" data-act="mg" data-kind="sellHouse" data-tile="${i}" title="Sell a building (+$${hc / 2})" ${o.houses ? '' : 'disabled'}>${I.down}</button>` : '')
       + (S.settings.mortgage ? (o.mortgaged
         ? `<button class="btn soft" data-act="mg" data-kind="unmortgage" data-tile="${i}" title="Lift mortgage ($${Math.round(t.price * 0.55)})">${I.unlock}</button>`
-        : `<button class="btn soft" data-act="mg" data-kind="mortgage" data-tile="${i}" title="Mortgage (+$${t.price / 2})">${I.bank}</button>`) : '')
+        : `<button class="btn soft" data-act="mg" data-kind="mortgage" data-tile="${i}" title="Mortgage for the sell value (+$${t.price / 2}). Lift it within 5 of your turns or the bank takes the property">${I.bank}</button>`) : '')
       + `<span class="sp"></span><button class="btn" data-act="mg" data-kind="sellProp" data-tile="${i}" title="Sell to the bank (+$${o.mortgaged ? 0 : t.price / 2})">${I.trash}</button></div>`;
   }
   return `<button class="x" data-act="closeProp">×</button><h4>${esc(t.name)}</h4>`
     + `<table class="rt"><tr><th><span>when</span></th><th><span>get</span></th></tr>${rows}</table>${btns}`
-    + `<div class="pc-owner">${owner ? `Owner &nbsp; ${dot(owner)} <b>${esc(owner.name)}</b>${o.mortgaged ? ' · mortgaged' : ''}` : 'Not owned yet'}</div>`
+    + `<div class="pc-owner">${owner ? `Owner &nbsp; ${dot(owner)} <b>${esc(owner.name)}</b>${o.mortgaged ? ` · mortgaged${o.mortgageTurns ? `, ${o.mortgageTurns} turn${o.mortgageTurns === 1 ? '' : 's'} left` : ''}` : ''}` : 'Not owned yet'}</div>`
     + `<div class="pc-foot"><div><small>Price</small>$ ${t.price}</div>${t.type === 'city' ? `<div><small>🏠</small>$ ${houseCost(t.price)}</div><div><small>🏨</small>$ ${houseCost(t.price)}</div>` : ''}</div>`;
 }
 function renderProp() {
@@ -778,6 +833,41 @@ function renderModal() {
   setHTML(el, 'modal', h);
 }
 
+// ---------- completed sets ----------
+// Who holds each whole set (cities of one country, all airports, all companies), or null.
+function setOwners(st) {
+  const g = {};
+  for (const t of TILES) {
+    if (!t.price) continue;
+    const k = t.type === 'city' ? `c:${t.cc}` : t.type, id = st.owned[t.i] ? st.owned[t.i].owner : null;
+    if (!g[k]) g[k] = { id, tiles: [t.i] };
+    else { if (g[k].id !== id) g[k].id = null; g[k].tiles.push(t.i); }
+  }
+  return g;
+}
+function celebrateSet(p, tiles) {
+  for (const i of tiles) {
+    const el = tileEls[i];
+    if (!el) continue;
+    el.style.setProperty('--sc', p.color);
+    el.classList.remove('setfx'); void el.offsetWidth; el.classList.add('setfx');
+    setTimeout(() => el.classList.remove('setfx'), 2400);
+  }
+  const first = TILES[tiles[0]];
+  const what = first.type === 'city' ? tiles.map((i) => esc(TILES[i].name)).join(' · ') : first.type === 'airport' ? 'every airport' : 'every company';
+  const bits = Array.from({ length: 26 }, () => {
+    const ang = Math.random() * Math.PI * 2, dist = 110 + Math.random() * 150;
+    return `<i style="--x:${Math.round(Math.cos(ang) * dist)}px;--y:${Math.round(Math.sin(ang) * dist)}px;--k:${COLORS[rnd(COLORS.length)]};animation-delay:${Math.round(Math.random() * 120)}ms"></i>`;
+  }).join('');
+  const b = document.createElement('div');
+  b.className = 'setbanner';
+  b.style.setProperty('--c', p.color);
+  b.innerHTML = `${bits}<div class="sb-tok">${tokenSVG(p.color)}</div><div class="sb-title">Set complete!</div><div><b>${esc(p.name)}</b> now owns ${first.type === 'city' ? propIcon(first) : ''} ${what}</div>`;
+  $('#board').append(b);
+  setTimeout(() => b.remove(), 2800);
+  sfx('set');
+}
+
 // ---------- main render ----------
 function render() {
   const first = !prevS;
@@ -813,6 +903,13 @@ function render() {
       else if (a && b && a.mortgaged !== b.mortgaged) sfx(b.mortgaged ? 'mortgage' : 'unmortgage');
     }
     if (S.trades.length !== prevS.trades.length) sfx('trade');
+    if (S.mapId === prevS.mapId && S.mapSeed === prevS.mapSeed) {
+      const was = setOwners(prevS), now = setOwners(S);
+      for (const k of Object.keys(now)) {
+        const owner = now[k].id && pl(now[k].id);
+        if (owner && now[k].tiles.length > 1 && (!was[k] || was[k].id !== now[k].id)) celebrateSet(owner, now[k].tiles);
+      }
+    }
     if (S.auction && prevS.auction && S.auction.bid !== prevS.auction.bid) sfx('bid');
     if (S.players.some((p) => p.bankrupt && !prevS.players.find((q) => q.id === p.id).bankrupt)) sfx('bankrupt');
   }
