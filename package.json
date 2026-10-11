@@ -1,0 +1,17 @@
+{
+  "name": "cashup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private online property-trading board game for friends",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "flag-icons": "^7.5.0",
+    "ws": "^8.22.0"
+  }
+}

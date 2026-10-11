@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Cashup — private board game</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Poppins:wght@800&family=Yanone+Kaffeesatz:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎲</text></svg>">
+</head>
+<body>
+  <!-- Home -->
+  <div id="home" hidden>
+    <div class="home-top">
+      <button class="iconbtn" data-act="mute" title="Sound"></button>
+    </div>
+    <div class="home-main">
+      <div class="home-dice"><div class="cube spin"></div></div>
+      <h1 class="logo big">CASH<span>UP</span><small>.io</small></h1>
+      <p class="tagline">Rule the economy</p>
+      <input id="homeName" class="field" maxlength="16" placeholder="Your name" autocomplete="off">
+      <button class="btn play" data-act="create"><span class="chev">»</span> Create a private game</button>
+      <div class="joinrow">
+        <input id="homeCode" class="field" placeholder="Room code or link" autocomplete="off">
+        <button class="btn soft" data-act="joinCode">Join</button>
+      </div>
+      <p class="home-note">Private rooms only — nobody can find your game without the link.</p>
+    </div>
+    <div class="howto">
+      <h2>How to play</h2>
+      <ul>
+        <li>Everyone starts with the same cash. Roll the dice on your turn and move around the board.</li>
+        <li>Doubles give you another roll — three in a row send you to prison.</li>
+        <li>Buy the cities, airports and companies you land on. Other players pay you rent when they stop there.</li>
+        <li>Own every city of a country to build houses and hotels and multiply the rent.</li>
+        <li>Trade with friends, mortgage when cash is tight, and be the last one standing.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Room -->
+  <div id="room" hidden>
+    <aside id="left">
+      <a class="logo" href="/">CASH<span>UP</span><small>.io</small></a>
+      <div class="toolrow">
+        <button class="iconbtn" data-act="help" title="How to play">?</button>
+        <button class="iconbtn" data-act="mute" title="Sound"></button>
+      </div>
+      <div class="panel share">
+        <div class="ptitle">Share this game</div>
+        <div class="sharerow">
+          <input id="shareUrl" readonly>
+          <button class="btn dark" data-act="copy">Copy</button>
+        </div>
+      </div>
+      <div class="panel chat">
+        <div class="ptitle">Chat</div>
+        <div id="chatList"></div>
+        <form id="chatForm">
+          <input id="chatInput" maxlength="200" placeholder="Say something..." autocomplete="off">
+          <button class="send" title="Send"></button>
+        </form>
+        <div id="chatLocked">Only game players can send chat messages</div>
+      </div>
+    </aside>
+
+    <main id="boardWrap">
+      <div id="board">
+        <div id="tiles"></div>
+        <div id="center">
+          <div id="timerSlot"></div>
+          <div id="diceBox">
+            <div class="die"><div class="cube" id="cube0"></div></div>
+            <div class="die"><div class="cube" id="cube1"></div></div>
+          </div>
+          <div id="actions"></div>
+          <div id="log"></div>
+        </div>
+        <div id="tokens"></div>
+        <div id="cardPop" hidden></div>
+        <div id="propPop" hidden></div>
+        <div id="overlay" hidden></div>
+      </div>
+    </main>
+
+    <aside id="right">
+      <div class="panel" id="players"></div>
+      <div id="side"></div>
+    </aside>
+  </div>
+
+  <div id="modal" hidden></div>
+  <div id="toasts"></div>
+  <div id="conn" hidden>Connection lost — reconnecting…</div>
+
+  <script src="/maps.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
