@@ -34,7 +34,7 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
 | Auction | Off | A property nobody buys goes to the highest bidder |
 | No rent while in prison | On | Owners in prison collect nothing |
-| Vacation skips a turn | On | A player who lands on Vacation misses their next turn |
+| Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |
 | Move after paying out of prison | Off | When off, paying or using a pardon card ends your turn and you move on the next one. Rolling doubles always gets you out and moving, with no extra roll |
 | Mortgage | Off | Mortgage for the sell value (50%); lift it within 5 of your turns or the bank takes the property |
 | Hotels per property | 1 | Up to 3. Two hotels pay 1.5× the hotel rent, three pay 2× |

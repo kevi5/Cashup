@@ -9,6 +9,8 @@ const { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, airportVisitRent, COMP
 const PORT = process.env.PORT || 3000;
 // Test-only: SPEED=40 shrinks every animation/bot delay so a scripted game finishes in seconds.
 const SPEED = Number(process.env.SPEED) || 1;
+// Changes on every start. Pages that were open across a restart see a new value and reload themselves to pick up new code.
+const BUILD = Date.now().toString(36);
 const PUBLIC = path.join(__dirname, 'public');
 const FLAGS = path.join(__dirname, 'node_modules', 'flag-icons', 'flags', '1x1');
 const MIME = {
@@ -164,7 +166,7 @@ class Room {
   // ---------- state sync ----------
   state() {
     return {
-      seq: ++this.seq,
+      seq: ++this.seq, ver: 2, build: BUILD,
       code: this.code, hostId: this.hostId, phase: this.phase, settings: this.settings,
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
       players: this.players.map((p) => ({
@@ -298,6 +300,15 @@ class Room {
     this.say(...parts);
   }
 
+  // Announce when a purchase takes the last property of a set whose every other property belongs to one other player.
+  noteBreak(p, i) {
+    const others = this.setOf(i).filter((j) => j !== i);
+    if (!others.length) return;
+    const first = this.owned[others[0]];
+    if (!first || first.owner === p.id || !others.every((j) => this.owned[j] && this.owned[j].owner === first.owner)) return;
+    this.say(this.P(p), ' broke ', this.P(this.byId(first.owner)), "'s set by taking ", this.TL(i));
+  }
+
   moveBy(p, steps) {
     const N = this.tiles.length;
     const from = p.pos;
@@ -370,8 +381,9 @@ class Room {
           this.say(this.P(p), ` went on vacation and collected $${this.pot}`);
           this.pot = 0;
         } else this.say(this.P(p), ' went on vacation');
-        // A vacation costs the player their next turn.
-        if (this.settings.vacationSkip) p.skip = true;
+        // A vacation ends the turn on the spot (doubles earn no extra roll here) and costs the next turn,
+        // so the player is still sitting on Vacation when that turn is skipped.
+        if (this.settings.vacationSkip) { p.skip = true; this.again = false; }
         break;
       case 'prison':
         this.say(this.P(p), ' is just passing by');
@@ -439,6 +451,7 @@ class Room {
     this.owned[p.pos] = { owner: p.id, houses: 0, mortgaged: false };
     this.say(this.P(p), ' bought ', this.TL(p.pos));
     this.noteSet(p, p.pos);
+    this.noteBreak(p, p.pos);
     this.finish(p);
   }
 
@@ -461,6 +474,7 @@ class Room {
         this.owned[a.tile] = { owner: w.id, houses: 0, mortgaged: false };
         this.say(this.P(w), ' won the auction for ', this.TL(a.tile), ` with $${a.bid}`);
         this.noteSet(w, a.tile);
+        this.noteBreak(w, a.tile);
       } else this.say('Nobody bid on ', this.TL(a.tile));
       this.auction = null;
       this.finish(this.cur());
@@ -499,7 +513,11 @@ class Room {
       i = (i + 1) % this.players.length;
       const q = this.players[i];
       if (q.bankrupt) continue;
-      if (q.skip) { q.skip = false; this.say(this.P(q), ' is on vacation and skips this turn'); continue; }
+      if (q.skip) {
+        q.skip = false;
+        // Only skip someone who is actually still on Vacation.
+        if (this.tiles[q.pos].type === 'vacation') { this.say(this.P(q), ' is on vacation and skips this turn'); continue; }
+      }
       break;
     }
     this.turnIdx = i;
@@ -817,6 +835,21 @@ class Room {
         return this.nextTurn();
       case 'build': case 'sellHouse': case 'mortgage': case 'unmortgage': case 'sellProp':
         return this.manage(client, p, m.type, m.tile);
+      case 'sellAll': {
+        // Sell every building and property to the bank at once, for the same amounts as selling them one by one.
+        if (!myTurn || this.tp === 'busy') return this.err(client, 'You can sell only during your turn');
+        const mine = this.propsOf(p);
+        if (!mine.length) return;
+        let total = 0;
+        for (const i of mine) {
+          const o = this.owned[i], t = this.tiles[i];
+          total += (o.houses * houseCost(t.price)) / 2 + (o.mortgaged ? 0 : t.price / 2);
+          delete this.owned[i];
+        }
+        p.money += total;
+        this.say(this.P(p), ` sold all ${mine.length} properties to the bank for $${total}`);
+        return this.broadcast();
+      }
       case 'bankrupt':
         if (myTurn && this.tp === 'busy') return;
         return this.bankrupt(p);

@@ -67,6 +67,7 @@ const SYNTH = {
   mortgage() { pluck(330, 0, 0.3, 0.07); pluck(247, 0.12, 0.45, 0.07); },
   unmortgage() { pluck(247, 0, 0.3, 0.07); pluck(330, 0.12, 0.45, 0.07); },
   set() { [523, 659, 784, 1047, 1319].forEach((f, i) => pluck(f, i * 0.08, 0.5, 0.09)); pluck(1568, 0.45, 0.8, 0.07); },
+  break() { noise(0, 0.09, 0.2, 1400); knock(0.02, 140, 0.24); pluck(311, 0.08, 0.45, 0.1); pluck(220, 0.22, 0.7, 0.1); },
 };
 function sfx(name) {
   if (muted()) return;
@@ -207,7 +208,7 @@ function initHome() {
 // =====================================================================
 // Room
 // =====================================================================
-let ws = null, retry = 0;
+let ws = null, retry = 0, bootBuild = null;
 let S = null, prevS = null, myId = null;
 let TILES = [], G = null, boardMap = null, tileEls = [];
 const tokEls = {}, animUntil = {};
@@ -228,7 +229,13 @@ function connect() {
   ws.onopen = () => { retry = 0; $('#conn').hidden = true; wsSend({ type: 'hello', room: ROOM, token: store.get(TOKEN_KEY) }); };
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.type === 'state') { prevS = S; S = m.state; myId = m.you; render(); }
+    if (m.type === 'state') {
+      // The server restarted while this page was open: reload once so everyone runs the current code.
+      const build = m.state.build || '';
+      if (bootBuild === null) bootBuild = build;
+      else if (build && build !== bootBuild) { location.reload(); return; }
+      prevS = S; S = m.state; myId = m.you; render();
+    }
     else if (m.type === 'joined') { store.set(TOKEN_KEY, m.token); pickMode = false; }
     else if (m.type === 'error') toast(m.msg);
   };
@@ -521,7 +528,7 @@ function renderLog() {
     box.prepend(d);
   }
   logSeen = last;
-  while (box.children.length > 14) box.lastChild.remove();
+  while (box.children.length > 300) box.lastChild.remove();
 }
 
 // ---------- right column ----------
@@ -589,6 +596,15 @@ function settingsHTML() {
   </div>`;
 }
 
+// What the bank pays for a property and everything built on it (matches the server).
+const sellValue = (t) => { const o = S.owned[t.i]; return (o.houses * houseCost(t.price)) / 2 + (o.mortgaged ? 0 : t.price / 2); };
+function sellRow(mine) {
+  const total = mine.reduce((sum, t) => sum + sellValue(t), 0);
+  const can = S.phase === 'playing' && S.turn === myId && S.tp !== 'busy';
+  return `<div class="sellall"><span>Sell value <b>${money(total)}</b></span>`
+    + (S.ver >= 2 ? `<button class="btn sm red" data-act="sellAll" data-total="${total}" data-n="${mine.length}" ${can ? '' : 'disabled'} title="${can ? 'Sell every building and property to the bank' : 'Available on your turn'}">${I.trash} Sell all</button>` : '') + '</div>';
+}
+
 function gameSideHTML() {
   const m = me(), alive = m && !m.bankrupt && S.phase === 'playing';
   let h = '';
@@ -605,7 +621,7 @@ function gameSideHTML() {
     h += `<div class="panel myprops"><div class="ptitle">My properties (${mine.length})</div>${mine.map((t) => {
       const o = S.owned[t.i];
       return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}${canBuild(t.i) ? `<span class="canb" title="You can build here">${I.up}</span>` : ''}<span class="h">${o.mortgaged ? `🔒${o.mortgageTurns || ''}` : buildings(o.houses)}</span><span class="rent">${currentRent(t.i)}</span></button>`;
-    }).join('') || '<div class="empty">Nothing yet</div>'}</div>`;
+    }).join('') || '<div class="empty">Nothing yet</div>'}${mine.length ? sellRow(mine) : ''}</div>`;
   }
   return h;
 }
@@ -779,7 +795,7 @@ function renderModal() {
       <li>Own all cities of a country to build houses and a hotel — open the property card on your turn and press the up arrow.</li>
       <li>Short on cash? Sell buildings, mortgage or sell properties, or strike a deal in Trades.</li>
       <li>In prison: pay $50, use a pardon card, or roll doubles. Doubles get you out and moving straight away, without the usual extra roll. After three tries you pay. Whether you move on the turn you pay is a room setting.</li>
-      <li>Landing on Vacation collects the cash pot, and (unless the room turns it off) you skip your next turn.</li>
+      <li>Landing on Vacation collects the cash pot. Unless the room turns it off, your turn ends there (even on doubles) and you skip your next one.</li>
       <li>The last player who is not bankrupt wins.</li></ul>
       <p style="color:var(--muted);font-size:13px">Some sound effects from <a class="link" href="https://notificationsounds.com" target="_blank" rel="noopener">notificationsounds.com</a>, Creative Commons Attribution. See <a class="link" href="/sounds/CREDITS.md" target="_blank">credits</a>.</p></div>`;
   } else if (modal.type === 'confirm') {
@@ -838,6 +854,37 @@ function celebrateSet(p, tiles) {
   sfx('set');
 }
 
+// A purchase that takes the last property of a set whose every other property belongs to one other player.
+function breakerOf(prev, now, i) {
+  if (prev.owned[i] || !now.owned[i]) return null;
+  const t = TILES[i], others = TILES.filter((x) => x.i !== i && x.type === t.type && (t.type !== 'city' || x.cc === t.cc));
+  if (!others.length) return null;
+  const first = now.owned[others[0].i];
+  if (!first || first.owner === now.owned[i].owner || !others.every((x) => now.owned[x.i] && now.owned[x.i].owner === first.owner)) return null;
+  return { breaker: pl(now.owned[i].owner), victim: pl(first.owner), tile: i, others: others.map((x) => x.i) };
+}
+function showBreak({ breaker, victim, tile, others }) {
+  if (!breaker || !victim) return;
+  const fx = (i, cls, color, ms) => {
+    const el = tileEls[i];
+    if (!el) return;
+    el.style.setProperty('--sc', color);
+    el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), ms);
+  };
+  fx(tile, 'breakhit', breaker.color, 2000);
+  for (const i of others) fx(i, 'breakfx', victim.color, 1400);
+  const t = TILES[tile];
+  const b = document.createElement('div');
+  b.className = 'setbanner breaker';
+  b.style.setProperty('--c', '#ff4d4d');
+  b.innerHTML = `<div class="sb-duel"><span class="sb-tok">${tokenSVG(breaker.color)}</span><span class="sb-x">💥</span><span class="sb-tok lost">${tokenSVG(victim.color)}</span></div>`
+    + `<div class="sb-title">Set breaker!</div><div><b>${esc(breaker.name)}</b> took ${propIcon(t)} ${esc(t.name)} and blocked <b>${esc(victim.name)}</b></div>`;
+  $('#board').append(b);
+  setTimeout(() => b.remove(), 2800);
+  sfx('break');
+}
+
 // ---------- main render ----------
 function render() {
   const first = !prevS;
@@ -874,6 +921,7 @@ function render() {
     }
     if (S.trades.length !== prevS.trades.length) sfx('trade');
     if (S.mapId === prevS.mapId && S.mapSeed === prevS.mapSeed) {
+      for (const i of Object.keys(so)) { const hit = breakerOf(prevS, S, +i); if (hit) showBreak(hit); }
       const was = setOwners(prevS), now = setOwners(S);
       for (const k of Object.keys(now)) {
         const owner = now[k].id && pl(now[k].id);
@@ -889,6 +937,18 @@ function render() {
 const ACT = {
   mute() { store.set('muted', muted() ? '0' : '1'); paintMute(); },
   help() { modal = { type: 'help' }; renderModal(); },
+  copyLog() {
+    // oldest first, one event per line
+    const text = [...document.querySelectorAll('#log .lline')].map((el) => el.innerText.replace(/\s+/g, ' ').trim()).reverse().join('\n');
+    if (!text) return toast('The game log is empty');
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast('Game log copied'), () => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.append(ta); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      toast(ok ? 'Game log copied' : 'Could not copy: select the log text and copy it manually');
+    });
+  },
   copy(b) {
     const url = $('#shareUrl').value;
     (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).catch(() => { $('#shareUrl').select(); document.execCommand('copy'); });
@@ -934,6 +994,11 @@ const ACT = {
   closeCard() { $('#cardPop').hidden = true; },
   closeModal() { modal = null; renderModal(); },
   confirmYes() { const run = modal.run; modal = null; renderModal(); run(); },
+  sellAll(b) {
+    const n = +b.dataset.n;
+    modal = { type: 'confirm', title: `Sell everything for $${b.dataset.total}?`, text: `All ${n} of your propert${n === 1 ? 'y goes' : 'ies go'} back to the bank, buildings included. This cannot be undone.`, yes: 'Sell all', run: () => wsSend({ type: 'sellAll' }) };
+    renderModal();
+  },
   bankrupt() {
     modal = { type: 'confirm', title: 'Declare bankruptcy?', text: 'You will lose all your properties and leave the game. This cannot be undone.', yes: 'Bankrupt', run: () => wsSend({ type: 'bankrupt' }) };
     renderModal();
@@ -994,7 +1059,7 @@ function initRoom() {
 }
 
 paintMute();
-for (const [sel, html] of [['[data-act=copy]', `${I.copy} Copy`], ['#chatForm .send', I.send], ['[data-act=joinCode]', `${I.key} Join`]]) {
+for (const [sel, html] of [['[data-act=copyLog]', I.copy], ['[data-act=copy]', `${I.copy} Copy`], ['#chatForm .send', I.send], ['[data-act=joinCode]', `${I.key} Join`]]) {
   const el = $(sel);
   if (el) el.innerHTML = html;
 }
