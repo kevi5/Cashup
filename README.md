@@ -6,6 +6,8 @@ Create a room, send the link, and play: roll 3D dice, buy cities, airports and c
 
 It is a small, dependency-light project: one Node process (HTTP + WebSocket) holding all game rules, and a plain JavaScript client with no build step.
 
+Inspired by [richup.io](https://richup.io/), with thanks to its creators. See [Credits](#credits).
+
 ## Features
 
 - **Private multiplayer** for 2 to 8 players per room, with optional computer players to fill seats
@@ -18,7 +20,7 @@ It is a small, dependency-light project: one Node process (HTTP + WebSocket) hol
 - **3D dice** drawn by a small canvas renderer written for this project, hopping tokens, and a one-time celebration when a player completes a set
 - **60 appearances**, all original characters: animals (lion, fox, panda, shark, dragon…), characters (pirate, astronaut, wizard, vampire, knight…) and a few oddities (pumpkin, cactus, snowman, sun). They are defined in `public/skins.js`
 - **At-a-glance board**: current rent on every owned property, turns left on mortgages, the cash waiting on Vacation, and a highlight when you can afford to build
-- **Chat**, a live game log, sound cues with a mute switch, and seats that survive a page refresh
+- **Chat**, a scrollable game log you can copy, sound cues with a volume slider, and seats that survive a page refresh
 - Works on desktop and scales down for narrow screens
 
 ## Room settings
@@ -32,7 +34,7 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Starting cash | $3000 | $500 to $10,000 |
 | x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
-| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. A player in debt gets 10 seconds to sell something themselves, then their least useful holdings are sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties |
+| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on but own something sellable, you get the normal buy prompt so you can sell and still buy it. A player in debt gets 10 seconds to sell something themselves, then their least useful holdings are sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties |
 | Auction | Off | A property nobody buys goes to the highest bidder |
 | No rent while in prison | On | Owners in prison collect nothing |
 | Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |
@@ -53,27 +55,36 @@ Requires Node 18 or newer.
 
 ```bash
 npm install
-npm start          # http://localhost:3000
+npm start
 ```
 
-Open the page, enter a name, click **Create a private game**, and share the room link.
+Open http://localhost:3000, enter a name, click **Create a private game**, and share the room link.
 
 ## Play with friends over the internet
 
 The server has to be reachable from your friends' devices.
 
-**Quick tunnel from your own machine** (nothing to deploy; the link works while both commands are running):
+**Quick tunnel from your own machine** (nothing to deploy; the link works while both commands are running). Start the game:
 
 ```bash
 npm start
-# in a second terminal, either of:
+```
+
+Then, in a second terminal, run one of these:
+
+```bash
 cloudflared tunnel --url http://localhost:3000
+```
+
+```bash
 ngrok http 3000
 ```
 
 Open the `https://…` address the tunnel prints, create a game there, and send your friends the room link from the "Share this game" box. Anyone with that link can join, so share it only with the people you want in the game.
 
-**Host it** on any Node host (Render, Railway, Fly.io, a VPS). It is a single process that listens on `$PORT` and needs WebSocket support. Rooms live in memory, so restarting the server ends games in progress.
+**Host it for a permanent address.** The game needs a running server, so a static host such as GitHub Pages cannot run it. Any Node host with WebSocket support works (Render, Railway, Fly.io, a VPS): it is a single process that listens on `$PORT`. Rooms live in memory, so restarting the server ends games in progress.
+
+The repository includes a `render.yaml`, so on [Render](https://render.com) you can choose **New → Blueprint**, pick this repository, and get an address like `https://cashup.onrender.com` that redeploys on every push. Render's free plan puts an idle service to sleep, which ends any game in progress.
 
 ## How it works
 
@@ -102,15 +113,23 @@ Only add audio you have the rights to use.
 ## Testing
 
 - Two players in one browser: open the room link in a second tab with `?seat=2` added to get a separate seat.
-- Scripted game against bots (server must be running):
+- Scripted game against bots (server must be running). The arguments are the map and the number of seconds to play:
 
   ```bash
-  node test/sim.js classic 60          # map, seconds
+  node test/sim.js classic 60
   ```
 
-- Fast full games: start a second server with every delay shortened, then point the script at it:
+- Fast full games: start a second server with every delay shortened, then point the script at it. The script's arguments are the map, seconds to play, auction on (1) or off (0), the port, and the stall timeout in milliseconds:
 
   ```bash
   PORT=3111 SPEED=40 node server.js
-  node test/sim.js worldwide 100 1 3111 4000   # map, seconds, auction on, port, stall timeout (ms)
+  node test/sim.js worldwide 100 1 3111 4000
   ```
+
+## Credits
+
+- **Inspired by [richup.io](https://richup.io/).** Thank you to the richup.io team for making a great online board game; playing it with friends is what prompted this project. If you want the original, polished experience with public rooms and more, go and play it there.
+- Cashup is an independent hobby project. It is not affiliated with or endorsed by richup.io. Its code, characters, icons, dice and card text were written for this project.
+- Sound effects: nine files from [notificationsounds.com](https://notificationsounds.com), Creative Commons Attribution, listed in [`public/sounds/CREDITS.md`](public/sounds/CREDITS.md). The rest are generated in the browser.
+- Flags: the [`flag-icons`](https://github.com/lipis/flag-icons) package.
+- Fonts: Nunito, Poppins and Yanone Kaffeesatz, served by Google Fonts.

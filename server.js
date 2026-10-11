@@ -368,10 +368,12 @@ class Room {
       case 'city': case 'airport': case 'company': {
         const o = this.owned[p.pos];
         if (!o) {
-          // Fast game: no buy prompt. Take it if affordable, otherwise auction it (when enabled) or move on.
+          // Fast game: take it without asking when affordable. When it is not, a player who owns something
+          // they could sell gets the normal buy prompt so they can raise the cash; otherwise play moves on.
           if (this.settings.fastGame) {
             if (p.money >= t.price) return this.buy(p);
-            return this.settings.auction ? this.startAuction(p) : this.finish(p);
+            const canRaise = this.propsOf(p).some((i) => !this.owned[i].mortgaged || this.owned[i].houses > 0);
+            if (!canRaise) return this.settings.auction ? this.startAuction(p) : this.finish(p);
           }
           this.tp = 'buy';
           return this.broadcast();

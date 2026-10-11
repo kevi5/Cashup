@@ -22,20 +22,29 @@ const TOKEN_KEY = SEAT ? `tok:${ROOM}:${SEAT}` : `tok:${ROOM}`;
 let actx = null;
 const sndFiles = {};
 const muted = () => store.get('muted') === '1';
+// Master volume, 0 to 1. 0.7 is the default loudness; the slider scales every cue, generated or file.
+const volume = () => { if (muted()) return 0; const v = store.get('vol'); return v === null || v === '' || isNaN(+v) ? 0.7 : Math.max(0, Math.min(1, +v)); };
+let masterGain = null;
 function ac() { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); return actx; }
+function out() {
+  const c = ac();
+  if (!masterGain) { masterGain = c.createGain(); masterGain.connect(c.destination); }
+  masterGain.gain.value = volume() / 0.7;
+  return masterGain;
+}
 function tone(freq, at = 0, dur = 0.1, type = 'sine', vol = 0.08, slide = 0) {
   const c = ac(), o = c.createOscillator(), g = c.createGain(), t = c.currentTime + at;
   o.type = type; o.frequency.setValueAtTime(freq, t);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+  o.connect(g).connect(out()); o.start(t); o.stop(t + dur + 0.02);
 }
 function noise(at = 0, dur = 0.05, vol = 0.12, hz = 2400) {
   const c = ac(), len = Math.ceil(c.sampleRate * dur), buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
   const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
   src.buffer = buf; f.type = 'bandpass'; f.frequency.value = hz; f.Q.value = 1.2; g.gain.value = vol;
-  src.connect(f).connect(g).connect(c.destination); src.start(c.currentTime + at);
+  src.connect(f).connect(g).connect(out()); src.start(c.currentTime + at);
 }
 // A mallet-like note: fundamental plus two quiet overtones with a fast decay.
 function pluck(freq, at = 0, dur = 0.35, vol = 0.09) {
@@ -68,19 +77,52 @@ const SYNTH = {
   unmortgage() { pluck(247, 0, 0.3, 0.07); pluck(330, 0.12, 0.45, 0.07); },
   set() { [523, 659, 784, 1047, 1319].forEach((f, i) => pluck(f, i * 0.08, 0.5, 0.09)); pluck(1568, 0.45, 0.8, 0.07); },
   break() { noise(0, 0.09, 0.2, 1400); knock(0.02, 140, 0.24); pluck(311, 0.08, 0.45, 0.1); pluck(220, 0.22, 0.7, 0.1); },
+  land() { knock(0, 170, 0.16); noise(0.01, 0.05, 0.05, 700); },
+  coin() { pluck(1319, 0, 0.12, 0.06); pluck(1760, 0.06, 0.12, 0.06); pluck(2093, 0.12, 0.35, 0.06); },
+  tax() { pluck(440, 0, 0.18, 0.07); pluck(370, 0.09, 0.18, 0.07); pluck(311, 0.18, 0.4, 0.07); },
+  vacation() { [659, 784, 988, 784, 988, 1175].forEach((f, i) => pluck(f, i * 0.09, 0.3, 0.06)); },
+  doubles() { pluck(988, 0, 0.14, 0.06); pluck(1319, 0.07, 0.14, 0.06); pluck(1976, 0.14, 0.4, 0.06); },
+  join() { pluck(587, 0, 0.18, 0.06); pluck(880, 0.09, 0.3, 0.06); },
+  sell() { pluck(880, 0, 0.14, 0.06); pluck(659, 0.08, 0.14, 0.06); noise(0.16, 0.05, 0.05, 4200); },
+  gavel() { knock(0, 210, 0.22); knock(0.16, 210, 0.2); },
+  skip() { tone(520, 0, 0.16, 'sine', 0.06, -220); },
+  hotel() { knock(0, 280, 0.16); [523, 659, 784, 1047].forEach((f, i) => pluck(f, 0.1 + i * 0.07, 0.4, 0.07)); },
+  warn() { pluck(740, 0, 0.12, 0.07); pluck(740, 0.2, 0.12, 0.07); pluck(622, 0.4, 0.3, 0.07); },
+  error() { tone(220, 0, 0.12, 'triangle', 0.07); tone(175, 0.1, 0.2, 'triangle', 0.07); },
+  click() { noise(0, 0.008, 0.05, 3600); tone(900, 0, 0.03, 'sine', 0.02); },
 };
 function sfx(name) {
-  if (muted()) return;
+  const v = volume();
+  if (!v) return;
   try {
     const a = sndFiles[name];
-    if (a) { const c = a.cloneNode(); c.volume = 0.6; c.play().catch(() => {}); return; }
+    if (a) { const c = a.cloneNode(); c.volume = Math.min(1, (0.6 * v) / 0.7); c.play().catch(() => {}); return; }
     if (SYNTH[name]) SYNTH[name]();
   } catch { /* audio not available */ }
 }
 fetch('/api/sounds').then((r) => r.json()).then((list) => {
   for (const f of list) { const a = new Audio(`/sounds/${f}`); a.preload = 'auto'; sndFiles[f.replace(/\.\w+$/, '')] = a; }
 }).catch(() => {});
-function paintMute() { for (const b of document.querySelectorAll('[data-act=mute]')) b.innerHTML = muted() ? I.mute : I.volume; }
+function paintMute() {
+  for (const b of document.querySelectorAll('[data-act=mute]')) b.innerHTML = volume() ? I.volume : I.mute;
+  for (const r of document.querySelectorAll('input.vol')) r.value = Math.round(volume() * 100);
+}
+// The speaker button mutes and unmutes; the slider sets the level (dragging it to 0 mutes).
+function toggleMute() {
+  if (volume()) store.set('muted', '1');
+  else { store.set('muted', '0'); if (!(+store.get('vol') > 0)) store.set('vol', '0.7'); }
+  paintMute();
+  sfx('click');
+}
+let volPreview = 0;
+document.addEventListener('input', (e) => {
+  if (!e.target.matches || !e.target.matches('input.vol')) return;
+  const v = +e.target.value / 100;
+  store.set('vol', String(v));
+  store.set('muted', v ? '0' : '1');
+  paintMute();
+  if (performance.now() - volPreview > 140) { volPreview = performance.now(); sfx('hop'); }
+});
 
 // ---------- icons (simple line art, drawn for this project) ----------
 const ic = (d, fill) => `<svg class="ic" viewBox="0 0 24 24" ${fill ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'}>${d}</svg>`;
@@ -162,7 +204,7 @@ function initHome() {
   document.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]');
     if (!b) return;
-    if (b.dataset.act === 'mute') { store.set('muted', muted() ? '0' : '1'); paintMute(); }
+    if (b.dataset.act === 'mute') toggleMute();
     if (b.dataset.act === 'joinCode') join();
     if (b.dataset.act === 'create') {
       b.disabled = true;
@@ -204,7 +246,7 @@ function connect() {
       prevS = S; S = m.state; myId = m.you; render();
     }
     else if (m.type === 'joined') { store.set(TOKEN_KEY, m.token); pickMode = false; }
-    else if (m.type === 'error') toast(m.msg);
+    else if (m.type === 'error') { toast(m.msg); sfx('error'); }
   };
   ws.onclose = () => { $('#conn').hidden = false; setTimeout(connect, Math.min(5000, 500 * 2 ** retry++)); };
 }
@@ -332,7 +374,14 @@ function renderBoard() {
       const rent = owner ? currentRent(i) : '';
       const key = owner ? `${owner.color}|${o.houses}|${o.mortgaged}|${o.mortgageTurns}|${rent}` : '';
       if (cache[`tile${i}`] !== key) {
+        const was = cache[`tile${i}`];
         cache[`tile${i}`] = key;
+        if (prevS && was !== undefined && key) {
+          // newly owned: the bar pops in; more buildings or a new owner: it bumps
+          const cls = was === '' ? 'justbought' : 'bump';
+          el.classList.remove('justbought', 'bump'); void el.offsetWidth; el.classList.add(cls);
+          setTimeout(() => el.classList.remove(cls), 700);
+        }
         el.classList.toggle('owned', !!owner);
         el.classList.toggle('mortgaged', !!(o && o.mortgaged));
         const pe = el.querySelector('.price');
@@ -395,6 +444,59 @@ function layoutTokens() {
   }
 }
 
+// ---------- small board effects ----------
+// A ring spreading out from a tile.
+function ripple(i, color) {
+  if (!G || !TILES[i]) return;
+  const [x, y] = tileCenter(i), el = document.createElement('div');
+  el.className = 'ripple';
+  el.style.left = `${x}px`; el.style.top = `${y}px`; el.style.setProperty('--c', color);
+  $('#board').append(el);
+  setTimeout(() => el.remove(), 700);
+}
+// An amount drifting up from a tile and fading (money gained or paid there).
+function floatText(i, text, color) {
+  if (!G || i === null || i === undefined || !TILES[i]) return;
+  const [x, y] = tileCenter(i), el = document.createElement('div');
+  el.className = 'floaty';
+  el.textContent = text;
+  el.style.left = `${x}px`; el.style.top = `${y}px`; el.style.color = color;
+  $('#board').append(el);
+  setTimeout(() => el.remove(), 1500);
+}
+// Count a player's balance up or down to its new value with a brief colour flash.
+function tweenMoney(el, from, to) {
+  if (!el || document.hidden) return;
+  const t0 = performance.now(), dur = 620;
+  el.classList.remove('up', 'down'); void el.offsetWidth; el.classList.add(to > from ? 'up' : 'down');
+  const step = (now) => {
+    if (!el.isConnected) return;
+    const k = Math.min(1, (now - t0) / dur), ease = 1 - Math.pow(1 - k, 3);
+    el.textContent = `$${Math.round(from + (to - from) * ease)}`;
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+// Effects and sounds that follow from a new line in the game log.
+// Only the server's own wording right after the player's name is tested, so card text and player
+// names (which can contain anything) never trigger an effect.
+function logFx(e) {
+  const lead = e.parts[0] && e.parts[0].p ? e.parts[0] : null;
+  if (!lead || typeof e.parts[1] !== 'string') return;
+  const who = pl(lead.p), at = who ? who.pos : null, txt = e.parts[1];
+  let m;
+  if ((m = txt.match(/^ (?:passed|landed on) Start and received \$(\d+)/))) { floatText(0, `+$${m[1]}`, '#65e052'); sfx('coin'); }
+  else if ((m = txt.match(/^ paid \$(\d+) (?:Earnings|Premium) Tax/))) { floatText(at, `-$${m[1]}`, '#ff6b5e'); sfx('tax'); }
+  else if ((m = txt.match(/^ paid \$(\d+) to $/))) floatText(at, `-$${m[1]}`, '#ff6b5e');
+  else if ((m = txt.match(/^ received a \$(\d+) /))) { floatText(at, `+$${m[1]}`, '#65e052'); sfx('coin'); }
+  else if ((m = txt.match(/^ went on vacation and collected \$(\d+)/))) { floatText(at, `+$${m[1]}`, '#65e052'); sfx('vacation'); }
+  else if (/^ went on vacation/.test(txt)) sfx('vacation');
+  else if (/^ joined the game/.test(txt)) sfx('join');
+  else if (/^ won the auction/.test(txt)) sfx('gavel');
+  else if (/^ is on vacation and skips/.test(txt)) sfx('skip');
+  else if (/^ sold /.test(txt)) sfx('sell');
+}
+
 function animateMove(mv) {
   const el = tokEls[mv.pid];
   if (!el) return;
@@ -403,11 +505,15 @@ function animateMove(mv) {
     el.classList.add('slide');
     setTimeout(() => el.classList.remove('slide'), 700);
     sfx('jail');
+    const cell = tileEls[mv.to];
+    if (cell) { cell.classList.remove('rattle'); void cell.offsetWidth; cell.classList.add('rattle'); setTimeout(() => cell.classList.remove('rattle'), 900); }
     return;
   }
   const dir = mv.mode === 'back' ? -1 : 1;
   animUntil[mv.pid] = performance.now() + mv.steps * mv.ms + 80;
   el.style.transitionDuration = `${mv.ms}ms`;
+  el.style.setProperty('--hop', `${mv.ms}ms`);
+  el.style.setProperty('--lift', mv.ms > 100 ? '-12px' : '-6px');
   for (let s = 1; s <= mv.steps; s++) {
     setTimeout(() => {
       if (lastMoveId !== mv.id || !tokEls[mv.pid]) return;
@@ -420,6 +526,12 @@ function animateMove(mv) {
           if (lastMoveId !== mv.id) return;
           animUntil[mv.pid] = 0; el.style.transitionDuration = ''; el.classList.remove('hop');
           layoutTokens();
+          // touchdown: a squash on the token and a ring spreading from the tile, in the player's colour
+          const who = pl(mv.pid);
+          el.classList.remove('landed'); void el.offsetWidth; el.classList.add('landed');
+          setTimeout(() => el.classList.remove('landed'), 450);
+          if (who) ripple(mv.to, who.color);
+          sfx('land');
         }, mv.ms);
       }
     }, (s - 1) * mv.ms);
@@ -484,7 +596,8 @@ function centerHTML() {
   if (S.tp === 'buy') {
     const t = TILES[m.pos];
     const skip = S.settings.auction ? `${I.gavel} Auction` : S.again ? `${I.x} Skip` : `${I.check} End turn`;
-    return `<button class="btn" data-act="skip">${skip}</button><button class="btn" data-act="buy" ${m.money < t.price ? 'disabled' : ''}>${I.cart} Buy for $${t.price}</button>`;
+    const short = m.money < t.price ? `<div class="hint" style="color:var(--muted)">You are $${t.price - Math.max(0, m.money)} short. Sell or mortgage something to buy it, or pass.</div>` : '';
+    return `<button class="btn" data-act="skip">${skip}</button><button class="btn" data-act="buy" ${m.money < t.price ? 'disabled' : ''}>${I.cart} Buy for $${t.price}</button>${short}`;
   }
   if (S.tp === 'end') return `<button class="btn" data-act="endTurn" ${m.money < 0 ? 'disabled' : ''}>${I.check} End turn</button>${debt}`;
   return '';
@@ -506,6 +619,7 @@ function renderLog() {
     d.className = 'lline';
     d.innerHTML = e.parts.map(partHTML).join('');
     box.prepend(d);
+    if (prevS && logSeen) logFx(e);     // not for the backlog a page receives when it first loads
   }
   logSeen = last;
   while (box.children.length > 300) box.lastChild.remove();
@@ -543,6 +657,7 @@ function renderPlayers() {
       d.textContent = diff > 0 ? `+${diff}` : diff;
       row.append(d);
       setTimeout(() => d.remove(), 1800);
+      tweenMoney(row.querySelector('.money'), q.money, p.money);
       // A purchase, build or mortgage has its own cue; don't stack the money cue on top of it.
       if (p.id === myId && JSON.stringify(prevS.owned) === JSON.stringify(S.owned)) sfx(diff > 0 ? 'gain' : 'pay');
     }
@@ -563,7 +678,7 @@ function settingsHTML() {
     <h3>Gameplay rules</h3>
     ${tog('doubleRent', '🪙', 'x2 rent on full-set properties', 'If a player owns a full property set, the base rent payment will be doubled')}
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
-    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. If you run out of cash you get 10 seconds to sell something yourself, then your least useful properties are sold automatically') : ''}
+    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on, you can sell something and still buy it. If you run out of cash you get 10 seconds to sell something yourself, then your least useful properties are sold automatically') : ''}
     ${'vacationSkip' in s ? tog('vacationSkip', '⏭️', 'Vacation skips a turn', 'A player who lands on Vacation misses their next turn') : ''}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
@@ -898,17 +1013,24 @@ function render() {
   // sound cues for state transitions
   if (prevS.phase === 'lobby' && S.phase === 'playing') sfx('start');
   if (prevS.phase === 'playing' && S.phase === 'over') sfx(S.winner === myId ? 'win' : 'bankrupt');
-  if (S.phase === 'playing' && S.turn === myId && S.tp === 'roll' && (prevS.turn !== myId || prevS.phase !== 'playing')) sfx('turn');
+  if (S.phase === 'playing' && S.turn === myId && S.tp === 'roll' && (prevS.turn !== myId || prevS.phase !== 'playing')) {
+    sfx('turn');
+    const slot = $('#timerSlot');
+    slot.innerHTML = '<div class="yourturn">Your turn</div>';
+    setTimeout(() => { if (slot.firstChild && slot.firstChild.className === 'yourturn') slot.innerHTML = ''; }, 1700);
+  }
   if (S.phase === 'playing' && prevS.phase === 'playing') {
     const po = prevS.owned, so = S.owned;
     const ids = new Set([...Object.keys(po), ...Object.keys(so)]);
     for (const i of ids) {
       const a = po[i], b = so[i];
       if (!a && b) sfx('buy');
-      else if (a && b && b.houses > a.houses) sfx('build');
+      else if (a && b && b.houses > a.houses) sfx(b.houses >= 5 ? 'hotel' : 'build');
       else if (a && b && a.mortgaged !== b.mortgaged) sfx(b.mortgaged ? 'mortgage' : 'unmortgage');
     }
     if (S.trades.length !== prevS.trades.length) sfx('trade');
+    if (S.again && S.tp === 'roll' && !(prevS.again && prevS.tp === 'roll')) sfx('doubles');
+    if (S.debt && S.debt.pid === myId && !(prevS.debt && prevS.debt.pid === myId)) sfx('warn');
     if (S.mapId === prevS.mapId && S.mapSeed === prevS.mapSeed) {
       for (const i of Object.keys(so)) { const hit = breakerOf(prevS, S, +i); if (hit) showBreak(hit); }
       const was = setOwners(prevS), now = setOwners(S);
@@ -924,7 +1046,7 @@ function render() {
 
 // ---------- input ----------
 const ACT = {
-  mute() { store.set('muted', muted() ? '0' : '1'); paintMute(); },
+  mute() { toggleMute(); },
   help() { modal = { type: 'help' }; renderModal(); },
   copyLog() {
     // oldest first, one event per line
@@ -1017,7 +1139,7 @@ function initRoom() {
   addEventListener('resize', fit);
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]');
-    if (b && !b.disabled && ACT[b.dataset.act]) { ACT[b.dataset.act](b); return; }
+    if (b && !b.disabled && ACT[b.dataset.act]) { if (b.dataset.act !== 'mute') sfx('click'); ACT[b.dataset.act](b); return; }
     const tile = e.target.closest('.tile.prop');
     if (tile) { ACT.prop(tile); return; }
     if (e.target.id === 'modal') { ACT.closeModal(); return; }

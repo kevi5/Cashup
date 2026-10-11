@@ -277,11 +277,16 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .token { position: absolute; left: 0; top: 0; width: calc(28px * var(--ts)); height: calc(28px * var(--ts)); transition: transform .16s ease-out; will-change: transform; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .5)); }
 .token.slide { transition: transform .6s cubic-bezier(.5, 0, .2, 1); }
 .token .rot { width: 100%; height: 100%; transition: transform .2s; }
-.token.hop .rot svg { animation: hop .16s ease-out; }
-@keyframes hop { 50% { transform: scale(1.25) translateY(-3px); } }
+/* Each step is a real jump: the token lifts off the board and stretches, whatever side of the board it is on. */
+.token.hop { animation: hopup var(--hop, 160ms) cubic-bezier(.3, 0, .5, 1); }
+.token.hop .rot svg { animation: hopstretch var(--hop, 160ms) ease-out; }
+@keyframes hopup { 0%, 100% { translate: 0 0; } 45% { translate: 0 var(--lift, -12px); } }
+@keyframes hopstretch { 0% { transform: scale(1.08, .9); } 45% { transform: scale(.94, 1.12); } 100% { transform: scale(1); } }
+.token.landed .rot svg { animation: landed .42s cubic-bezier(.3, 1.4, .5, 1); }
+@keyframes landed { 0% { transform: scale(1.28, .7); } 40% { transform: scale(.9, 1.14); } 70% { transform: scale(1.05, .96); } 100% { transform: scale(1); } }
 .token.cur { z-index: 5; }
 .token.cur .rot svg { animation: pulse 1.2s ease-in-out infinite; }
-.token.hop.cur .rot svg { animation: hop .16s ease-out; }
+.token.hop.cur .rot svg { animation: hopstretch var(--hop, 160ms) ease-out; }
 @keyframes pulse { 50% { transform: scale(1.14); } }
 .token.jailed { opacity: .85; }
 
@@ -451,3 +456,51 @@ button.chip:hover { border-color: rgba(255, 255, 255, .3); }
 
 /* fast game: time left to sell by hand */
 .debtbar { width: 260px; margin: 8px auto 0; }
+
+/* ---------- volume ---------- */
+input.vol { width: 84px; height: 32px; margin: 0; accent-color: #8e7ae6; cursor: pointer; background: none; }
+.home-top { align-items: center; gap: 4px; }
+#left .toolrow { align-items: center; }
+
+/* ---------- board effects ---------- */
+.ripple { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 3px solid var(--c); pointer-events: none; z-index: 3; animation: ripple .65s ease-out forwards; }
+@keyframes ripple { from { transform: scale(.4); opacity: .9; } to { transform: scale(2.6); opacity: 0; } }
+.floaty { position: absolute; z-index: 27; pointer-events: none; font-weight: 800; font-size: 21px; white-space: nowrap; text-shadow: 0 2px 4px rgba(0, 0, 0, .75), 0 0 10px rgba(0, 0, 0, .6); animation: floaty 1.45s ease-out forwards; }
+@keyframes floaty { 0% { transform: translate(-50%, -50%) scale(.5); opacity: 0; } 14% { transform: translate(-50%, -62%) scale(1.2); opacity: 1; } 28% { transform: translate(-50%, -75%) scale(1); } 80% { opacity: 1; } 100% { transform: translate(-50%, -190%) scale(1); opacity: 0; } }
+/* a purchase: the owner's bar pops into place and the tile lifts for a moment */
+.tile.justbought { animation: boughttile .6s cubic-bezier(.3, 1.4, .5, 1); z-index: 5; }
+.tile.justbought .price { animation: barin .55s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes boughttile { 0% { transform: scale(1); } 35% { transform: scale(1.13); } 100% { transform: scale(1); } }
+@keyframes barin { 0% { transform: scale(.2); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1); } }
+.tile.bump .price { animation: barbump .5s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes barbump { 35% { transform: scale(1.22); filter: brightness(1.35); } }
+.tile.rattle { animation: rattle .8s ease-out; }
+@keyframes rattle { 0%, 100% { translate: 0 0; } 12% { translate: -4px 0; } 24% { translate: 4px 0; } 36% { translate: -3px 0; } 48% { translate: 3px 0; } 60% { translate: -2px 0; } 72% { translate: 2px 0; } }
+/* balances count to their new value with a flash of green or red */
+.prow .money { transition: color .3s; font-variant-numeric: tabular-nums; }
+.prow .money.up { animation: moneyup .9s ease-out; }
+.prow .money.down { animation: moneydown .9s ease-out; }
+@keyframes moneyup { 0% { color: #65e052; transform: scale(1.22); } 100% { color: #fff; transform: scale(1); } }
+@keyframes moneydown { 0% { color: #ff6b5e; transform: scale(1.22); } 100% { color: #fff; transform: scale(1); } }
+.prow { animation: rowin .32s ease-out; }
+@keyframes rowin { from { opacity: 0; transform: translateX(14px); } }
+.prow.turn { background: linear-gradient(90deg, color-mix(in srgb, var(--pc) 22%, transparent), transparent 70%); transition: background .4s; }
+/* buttons and status lines rise into place when the turn moves on */
+#actions > * { animation: rise .24s ease-out backwards; }
+#actions > *:nth-child(2) { animation-delay: .05s; }
+#actions > *:nth-child(3) { animation-delay: .1s; }
+@keyframes rise { from { opacity: 0; transform: translateY(9px) scale(.96); } }
+.yourturn { display: inline-block; padding: 5px 18px; border-radius: 18px; font-weight: 800; letter-spacing: .5px; color: #fff; background: linear-gradient(90deg, #7c4ddb, #3b82f6); box-shadow: 0 0 24px rgba(124, 77, 219, .7); animation: yourturn 1.6s ease forwards; }
+@keyframes yourturn { 0% { opacity: 0; transform: translateY(-14px) scale(.7); } 14% { opacity: 1; transform: translateY(0) scale(1.12); } 24% { transform: scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px) scale(.96); } }
+#cardPop { animation: cardin .45s cubic-bezier(.3, 1.5, .5, 1); }
+@keyframes cardin { 0% { transform: translate(-50%, -50%) scale(.3) rotate(-10deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: translate(-50%, -50%) scale(1) rotate(0); } }
+.btn { transition: background .15s, transform .12s cubic-bezier(.3, 1.6, .5, 1), box-shadow .15s; }
+.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(0, 0, 0, .35); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.97); }
+
+/* people who ask their system for less motion get the game without the movement */
+@media (prefers-reduced-motion: reduce) {
+  .token.hop, .token.hop .rot svg, .token.landed .rot svg, .tile.justbought, .tile.justbought .price, .tile.bump .price, .tile.rattle,
+  .prow, #actions > *, .yourturn, .ripple, .floaty, .setbanner i { animation: none !important; }
+  .ripple, .floaty { display: none; }
+}
