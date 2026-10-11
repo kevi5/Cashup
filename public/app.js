@@ -319,8 +319,8 @@ function fitNames() {
   });
 }
 
-// Buildings are always written as icon × count (🏠×3, 🏨×1), never as repeated icons.
-const buildings = (h) => (h === 5 ? '🏨×1' : h ? `🏠×${h}` : '');
+// Houses are written as icon × count (🏠×3), never as repeated icons; a hotel is just its icon.
+const buildings = (h) => (h === 5 ? '🏨' : h ? `🏠×${h}` : '');
 // Board amounts are written like the price tags: number first, small $ after.
 const money = (n) => `${n}<small>$</small>`;
 function currentRent(i) {
