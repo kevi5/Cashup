@@ -1,8 +1,51 @@
 # Cashup
 
-A private, online property-trading board game for you and your friends. Rooms are reachable by link only: there is no public room list, no accounts and no store. Every map is free: Classic, Mr. Worldwide, Death Valley, Lucky Wheel, Speed Run (28 tiles), Jet Set (eight airports), Power Grid (six companies), Tax Haven, High Roller (prices up to $800), plus **Random** (plays one of those, chosen when the game starts) and **Generated** (a new shuffled board each time you pick it).
+**A private, real-time property-trading board game you play in the browser with friends.**
+
+Create a room, send the link, and play: roll 3D dice, buy cities, airports and companies, collect rent, build houses and hotels, trade, and bankrupt everyone else. There are no accounts, no ads, no store and no public lobby. A game is reachable only by its link, and every map and appearance is free.
+
+It is a small, dependency-light project: one Node process (HTTP + WebSocket) holding all game rules, and a plain JavaScript client with no build step.
+
+## Features
+
+- **Private multiplayer** for 2 to 8 players per room, with optional computer players to fill seats
+- **Server-authoritative rules**: clients only send actions, so everyone always sees the same game
+- **Eleven map options**
+  - Classic, Mr. Worldwide (48 tiles), Death Valley, Lucky Wheel
+  - Speed Run (28 tiles, quick games), Jet Set (eight airports), Power Grid (six companies), Tax Haven (taxes and refunds everywhere), High Roller (prices up to $800)
+  - **Random** plays one of the above, chosen when the game starts; **Generated** deals a brand-new shuffled board each time you pick it
+- **Full property game**: rent tables, houses and hotels, full-set bonuses, mortgages, auctions, trades between players, prison, Treasure and Surprise cards, taxes, a vacation cash pot, bankruptcy and a winner screen
+- **3D dice** drawn by a small canvas renderer written for this project, hopping tokens, and a one-time celebration when a player completes a set
+- **22 appearances**: twelve colours plus ten characters (tycoon, lion, king, pirate, robot, cat, alien, ninja, wizard, panda)
+- **At-a-glance board**: current rent on every owned property, turns left on mortgages, the cash waiting on Vacation, and a highlight when you can afford to build
+- **Chat**, a live game log, sound cues with a mute switch, and seats that survive a page refresh
+- Works on desktop and scales down for narrow screens
+
+## Room settings
+
+The host sets these before the game starts, and can hand the host role to another player at any time.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Maximum players | 4 | 2 to 8 |
+| Board map | Classic | Any of the eleven options above |
+| Starting cash | $3000 | $500 to $10,000 |
+| x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
+| Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
+| Auction | Off | A property nobody buys goes to the highest bidder |
+| No rent while in prison | On | Owners in prison collect nothing |
+| Move after leaving prison | On | When off, getting out ends your turn and you move on the next one |
+| Mortgage | Off | Mortgage for the sell value (50%); lift it within 5 of your turns or the bank takes the property |
+| Hotels per property | 1 | Up to 3. Two hotels pay 1.5× the hotel rent, three pay 2× |
+| Airport rent grows per landing | Off | Off: rent doubles with each airport the owner holds. On: each airport starts at $25 and doubles every time someone lands on it, up to $3200 |
+| Even build | Off | Houses must be built and sold evenly across a set |
+| Randomize player order | On | Shuffle seats when the game starts |
+
+To change the defaults, edit the `settings` object in `server.js`.
 
 ## Run it
+
+Requires Node 18 or newer.
 
 ```bash
 npm install
@@ -13,9 +56,9 @@ Open the page, enter a name, click **Create a private game**, and share the room
 
 ## Play with friends over the internet
 
-The server has to be reachable from your friends' devices. Two ways:
+The server has to be reachable from your friends' devices.
 
-**Quick tunnel from your own machine** (nothing to deploy; the link works while the command is running):
+**Quick tunnel from your own machine** (nothing to deploy; the link works while both commands are running):
 
 ```bash
 npm start
@@ -24,28 +67,30 @@ cloudflared tunnel --url http://localhost:3000
 ngrok http 3000
 ```
 
-Open the `https://…` address the tunnel prints, create a game there, and send your friends the room link from the "Share this game" box. Anyone with that link can join, so only share it with the people you want in the game.
+Open the `https://…` address the tunnel prints, create a game there, and send your friends the room link from the "Share this game" box. Anyone with that link can join, so share it only with the people you want in the game.
 
-**Host it** on any Node host (Render, Railway, Fly.io, a VPS). It is a single process that listens on `$PORT` and needs WebSocket support. Rooms live in memory, so a restart ends games in progress.
+**Host it** on any Node host (Render, Railway, Fly.io, a VPS). It is a single process that listens on `$PORT` and needs WebSocket support. Rooms live in memory, so restarting the server ends games in progress.
 
 ## How it works
 
-- `server.js`: HTTP + WebSocket server and all game rules. The server is authoritative; clients only send actions.
-- `public/maps.js`: board layouts and rent tables, shared by server and browser.
-- `public/app.js`, `public/style.css`, `public/index.html`: the client (no build step).
-- Flags are served from the `flag-icons` package.
+| File | Role |
+| --- | --- |
+| `server.js` | HTTP and WebSocket server, rooms, and every game rule |
+| `public/maps.js` | Board layouts, rent tables and the random board generator, shared by server and browser |
+| `public/app.js` | The client: board, panels, popups, animations |
+| `public/dice.js` | The 3D dice renderer (2D canvas, no CSS 3D) |
+| `public/style.css`, `public/index.html` | Styles and page shell |
+| `test/sim.js` | A scripted player for running whole games against the server |
 
-Room settings (host only, before the game starts): maximum players (2–8), map, bots, x2 rent on full sets, vacation cash, auctions, no rent while in prison, mortgages, even building, starting cash ($500 to $10,000), random player order. Defaults: x2 rent on, vacation cash on, auction off, no rent in prison on, mortgage off, even build off, $3000 starting cash; change them in the `settings` object in `server.js`.
-
-In a game: closing or refreshing a tab keeps your seat (reopen the same link in the same browser). The host can remove a player who has left. If the host stays away, the host role passes to the next player.
+Flags come from the `flag-icons` package. Closing or refreshing a tab keeps your seat (reopen the same link in the same browser). If the host stays away, the host role passes to the next player.
 
 ## Sounds
 
-Sound cues are generated in the browser. To use your own audio instead, drop a file named after the cue into `public/sounds/` (`.mp3`, `.ogg` or `.wav`) and it replaces the built-in one:
+Most cues are generated in the browser. Nine ship as audio files from [notificationsounds.com](https://notificationsounds.com) under a Creative Commons Attribution license; see [`public/sounds/CREDITS.md`](public/sounds/CREDITS.md).
 
-`roll`, `hop`, `buy`, `pay`, `gain`, `turn`, `card`, `jail`, `build`, `start`, `win`, `bankrupt`, `chat`, `trade`, `bid`, `mortgage`, `unmortgage`
+To use your own audio, drop a file named after the cue into `public/sounds/` (`.mp3`, `.ogg` or `.wav`) and it replaces the built-in one:
 
-Nine cues already ship as audio files from notificationsounds.com (Creative Commons Attribution); see `public/sounds/CREDITS.md`. To swap which sound plays for an event, rename the files.
+`roll`, `hop`, `buy`, `pay`, `gain`, `turn`, `card`, `jail`, `build`, `start`, `win`, `bankrupt`, `chat`, `trade`, `bid`, `mortgage`, `unmortgage`, `set`
 
 Only add audio you have the rights to use.
 

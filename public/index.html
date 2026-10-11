@@ -72,10 +72,7 @@
         <div id="tiles"></div>
         <div id="center">
           <div id="timerSlot"></div>
-          <div id="diceBox">
-            <div class="slot"><i class="dshadow"></i><div class="die"><div class="cube" id="cube0"></div></div></div>
-            <div class="slot"><i class="dshadow"></i><div class="die"><div class="cube" id="cube1"></div></div></div>
-          </div>
+          <div id="diceBox"><canvas id="diceCanvas" aria-hidden="true"></canvas></div>
           <div id="actions"></div>
           <div id="log"></div>
         </div>
@@ -97,6 +94,7 @@
   <div id="conn" hidden>Connection lost — reconnecting…</div>
 
   <script src="/maps.js"></script>
+  <script src="/dice.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { MAPS, rentTable, houseCost, AIRPORT_RENT, COMPANY_MULT, randomMap } = require('./public/maps.js');
+const { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, airportVisitRent, COMPANY_MULT, randomMap } = require('./public/maps.js');
 
 const PORT = process.env.PORT || 3000;
 // Test-only: SPEED=40 shrinks every animation/bot delay so a scripted game finishes in seconds.
@@ -75,7 +75,7 @@ class Room {
     this.settings = {
       maxPlayers: 4, map: 'classic', doubleRent: true, vacationCash: true, auction: false,
       noRentInPrison: true, mortgage: false, evenBuild: false, startingCash: 3000, randomOrder: true,
-      moveAfterPrison: true,
+      moveAfterPrison: true, maxHotels: 1, airportRepeat: false,
     };
     this.chat = [];
     this.timers = new Set();
@@ -146,11 +146,11 @@ class Room {
     const t = this.tiles[i], o = this.owned[i];
     if (t.type === 'city') {
       const table = rentTable(t.price);
-      if (o.houses > 0) return table[o.houses];
+      if (o.houses > 0) return rentAt(t.price, o.houses);
       return this.settings.doubleRent && this.ownsSet(o.owner, i) ? table[0] * 2 : table[0];
     }
     const n = this.setOf(i).filter((j) => this.owned[j] && this.owned[j].owner === o.owner).length;
-    if (t.type === 'airport') return AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1];
+    if (t.type === 'airport') return this.settings.airportRepeat ? airportVisitRent(o.visits || 0) : AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1];
     return COMPANY_MULT[Math.min(n, COMPANY_MULT.length) - 1] * diceSum;
   }
 
@@ -339,6 +339,8 @@ class Room {
           break;
         }
         this.pay(p, this.rent(p.pos, diceSum || this.dice[0] + this.dice[1]), owner);
+        // "Repeat" airports: every paid landing doubles the next rent at that airport.
+        if (t.type === 'airport' && this.settings.airportRepeat) o.visits = (o.visits || 0) + 1;
         break;
       }
       case 'taxpct': {
@@ -403,7 +405,7 @@ class Room {
         break;
       case 'repairs': {
         let total = 0;
-        for (const i of this.propsOf(p)) { const h = this.owned[i].houses; total += h === 5 ? b : h * a; }
+        for (const i of this.propsOf(p)) { const h = this.owned[i].houses; total += h >= 5 ? b * (h - 4) : h * a; }
         this.pay(p, total, null);
         if (total) this.say(this.P(p), ` paid $${total} for repairs`);
         break;
@@ -531,11 +533,11 @@ class Room {
         if (t.type !== 'city') return this.err(client, 'You can build only on cities');
         if (!this.ownsSet(p.id, i)) return this.err(client, 'You need the full set to build');
         if (set.some((j) => this.owned[j].mortgaged)) return this.err(client, 'Unmortgage the whole set first');
-        if (o.houses >= 5) return this.err(client, 'Already has a hotel');
+        if (o.houses >= 4 + this.settings.maxHotels) return this.err(client, this.settings.maxHotels > 1 ? 'Already has the maximum number of hotels' : 'Already has a hotel');
         if (this.settings.evenBuild && o.houses > Math.min(...setHouses)) return this.err(client, 'Build evenly across the set');
         if (p.money < cost) return this.err(client, 'Not enough money');
         p.money -= cost; o.houses++;
-        this.say(this.P(p), o.houses === 5 ? ' built a hotel in ' : ' built a house in ', this.TL(i));
+        this.say(this.P(p), o.houses >= 5 ? ' built a hotel in ' : ' built a house in ', this.TL(i));
         break;
       case 'sellHouse':
         if (!o.houses) return;
@@ -625,7 +627,7 @@ class Room {
     for (let n = 0; n < 3; n++) {
       const options = this.propsOf(p).filter((i) => {
         const t = this.tiles[i], o = this.owned[i];
-        if (t.type !== 'city' || o.houses >= 5 || !this.ownsSet(p.id, i)) return false;
+        if (t.type !== 'city' || o.houses >= 4 + this.settings.maxHotels || !this.ownsSet(p.id, i)) return false;
         const set = this.setOf(i);
         if (set.some((j) => this.owned[j].mortgaged)) return false;
         if (this.settings.evenBuild && o.houses > Math.min(...set.map((j) => this.owned[j].houses))) return false;
@@ -635,7 +637,7 @@ class Room {
       const i = options.sort((x, y) => this.tiles[y].price - this.tiles[x].price)[0];
       p.money -= houseCost(this.tiles[i].price);
       this.owned[i].houses++;
-      this.say(this.P(p), this.owned[i].houses === 5 ? ' built a hotel in ' : ' built a house in ', this.TL(i));
+      this.say(this.P(p), this.owned[i].houses >= 5 ? ' built a hotel in ' : ' built a house in ', this.TL(i));
     }
   }
 
@@ -718,10 +720,11 @@ class Room {
       case 'setting': {
         if (!host || this.phase !== 'lobby') return;
         const s = this.settings, v = m.value;
-        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison'];
+        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat'];
         if (bools.includes(m.key)) s[m.key] = !!v;
         else if (m.key === 'maxPlayers' && Number.isInteger(v) && v >= 2 && v <= 8 && v >= this.players.length) s.maxPlayers = v;
         else if (m.key === 'startingCash' && [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000].includes(v)) s.startingCash = v;
+        else if (m.key === 'maxHotels' && [1, 2, 3].includes(v)) s.maxHotels = v;
         else if (m.key === 'map' && MAPS[v]) {
           s.map = v;
           // Picking Generated (again) deals a fresh board; every client gets the layout in the state.
@@ -737,6 +740,14 @@ class Room {
         let name;
         do { name = `${BOT_A[rnd(BOT_A.length)]} ${BOT_B[rnd(BOT_B.length)]}`; } while (this.players.some((x) => x.name === name));
         this.addPlayer(name, color, true);
+        return this.broadcast();
+      }
+      case 'passHost': {
+        // The host hands the role to another human player who is currently connected.
+        const target = this.byId(m.id);
+        if (!host || !target || target === p || target.bot || !target.connected) return;
+        this.hostId = target.id;
+        this.say(this.P(p), ' made ', this.P(target), ' the host');
         return this.broadcast();
       }
       case 'kick': {

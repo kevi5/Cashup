@@ -99,6 +99,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .prow.off .ptok { filter: grayscale(1) opacity(.6); }
 .prow .x { color: var(--muted); width: 24px; height: 24px; border-radius: 50%; }
 .prow .x:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.prow .x.mk:hover { color: #f5b942; }
 .delta { position: absolute; right: 12px; font-weight: 800; font-size: 14px; pointer-events: none; animation: delta 1.8s ease-out forwards; }
 .delta.up { color: var(--green); top: 2px; }
 .delta.down { color: var(--red); bottom: 2px; }
@@ -229,12 +230,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 #center { position: absolute; display: flex; flex-direction: column; align-items: center; pointer-events: none; z-index: 4; }
 #center > * { pointer-events: auto; }
 #timerSlot { height: 34px; margin-top: 8px; }
-#diceBox { display: flex; gap: 30px; margin-top: 46px; height: 130px; align-items: flex-start; position: relative; }
-/* Flat dice: no 3D transforms, so nothing can flicker or clip through the board. */
-.slot { width: 80px; height: 80px; position: relative; }
-.die { width: 80px; height: 80px; position: relative; will-change: transform; }
-.dshadow { position: absolute; left: 2px; right: 2px; top: 72px; height: 18px; border-radius: 50%; background: radial-gradient(closest-side, rgba(0, 0, 0, .55), transparent); }
-#diceBox.doubles::after { content: ""; position: absolute; left: 50%; top: 84px; width: 250px; height: 50px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(59, 130, 246, .55), transparent); pointer-events: none; animation: fadein .4s; z-index: -1; }
+#diceBox { margin-top: 46px; width: 360px; height: 130px; position: relative; }
+/* The dice canvas is taller than its slot so the throw has room above; it overflows upward and ignores clicks. */
+#diceCanvas { position: absolute; left: 50%; top: -128px; width: 360px; height: 270px; transform: translateX(-50%); pointer-events: none; }
+#diceBox.doubles::after { content: ""; position: absolute; left: 50%; top: 92px; width: 260px; height: 46px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(59, 130, 246, .5), transparent); pointer-events: none; animation: fadein .4s; z-index: -1; }
 @keyframes fadein { from { opacity: 0; } }
 .cube { width: 80px; height: 80px; position: relative; transition: transform .15s ease-out; }
 .cube.spin { animation: rock 3.2s ease-in-out infinite; }

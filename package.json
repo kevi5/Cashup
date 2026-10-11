@@ -2,7 +2,7 @@
   "name": "cashup",
   "version": "1.0.0",
   "private": true,
-  "description": "Private online property-trading board game for friends",
+  "description": "Private, real-time property-trading board game for friends: Node + WebSocket server, no-build JavaScript client, eleven maps, bots, trades and 3D dice.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
