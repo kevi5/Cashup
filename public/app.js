@@ -319,6 +319,8 @@ function fitNames() {
   });
 }
 
+// Buildings are always written as icon × count (🏠×3, 🏨×1), never as repeated icons.
+const buildings = (h) => (h === 5 ? '🏨×1' : h ? `🏠×${h}` : '');
 // Board amounts are written like the price tags: number first, small $ after.
 const money = (n) => `${n}<small>$</small>`;
 function currentRent(i) {
@@ -351,7 +353,7 @@ function renderBoard() {
         const pe = el.querySelector('.price');
         if (owner) {
           el.style.setProperty('--owner', owner.color);
-          const b = o.houses === 5 ? '🏨' : o.houses ? `🏠${o.houses}` : '';
+          const b = buildings(o.houses);
           pe.innerHTML = `<span class="rl">${o.mortgaged ? `<span class="bld">🔒</span>${o.mortgageTurns ? `<span class="rent" title="Turns left to lift the mortgage">${o.mortgageTurns}</span>` : ''}` : `${b ? `<span class="bld">${b}</span>` : ''}<span class="rent">${rent}</span>`}</span>`;
         } else pe.innerHTML = money(t.price);
       }
@@ -640,7 +642,7 @@ function gameSideHTML() {
     const mine = TILES.filter((t) => S.owned[t.i] && S.owned[t.i].owner === myId);
     h += `<div class="panel myprops"><div class="ptitle">My properties (${mine.length})</div>${mine.map((t) => {
       const o = S.owned[t.i];
-      return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}${canBuild(t.i) ? `<span class="canb" title="You can build here">${I.up}</span>` : ''}<span class="h">${o.mortgaged ? `🔒${o.mortgageTurns || ''}` : o.houses === 5 ? '🏨' : '🏠'.repeat(o.houses)}</span><span class="rent">${currentRent(t.i)}</span></button>`;
+      return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}${canBuild(t.i) ? `<span class="canb" title="You can build here">${I.up}</span>` : ''}<span class="h">${o.mortgaged ? `🔒${o.mortgageTurns || ''}` : buildings(o.houses)}</span><span class="rent">${currentRent(t.i)}</span></button>`;
     }).join('') || '<div class="empty">Nothing yet</div>'}</div>`;
   }
   return h;
