@@ -16,7 +16,7 @@ It is a small, dependency-light project: one Node process (HTTP + WebSocket) hol
   - **Random** plays one of the above, chosen when the game starts; **Generated** deals a brand-new shuffled board each time you pick it
 - **Full property game**: rent tables, houses and hotels, full-set bonuses, mortgages, auctions, trades between players, prison, Treasure and Surprise cards, taxes, a vacation cash pot, bankruptcy and a winner screen
 - **3D dice** drawn by a small canvas renderer written for this project, hopping tokens, and a one-time celebration when a player completes a set
-- **22 appearances**: twelve colours plus ten characters (tycoon, lion, king, pirate, robot, cat, alien, ninja, wizard, panda)
+- **60 appearances**, all original characters: animals (lion, fox, panda, shark, dragon…), characters (pirate, astronaut, wizard, vampire, knight…) and a few oddities (pumpkin, cactus, snowman, sun). They are defined in `public/skins.js`
 - **At-a-glance board**: current rent on every owned property, turns left on mortgages, the cash waiting on Vacation, and a highlight when you can afford to build
 - **Chat**, a live game log, sound cues with a mute switch, and seats that survive a page refresh
 - Works on desktop and scales down for narrow screens
@@ -32,13 +32,16 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Starting cash | $3000 | $500 to $10,000 |
 | x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
+| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. Turns end automatically. A player in debt has their least useful holdings sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties |
 | Auction | Off | A property nobody buys goes to the highest bidder |
 | No rent while in prison | On | Owners in prison collect nothing |
 | Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |
 | Move after paying out of prison | Off | When off, paying or using a pardon card ends your turn and you move on the next one. Rolling doubles always gets you out and moving, with no extra roll |
 | Mortgage | Off | Mortgage for the sell value (50%); lift it within 5 of your turns or the bank takes the property |
 | Hotels per property | 1 | Up to 3. Two hotels pay 1.5× the hotel rent, three pay 2× |
-| Airport rent grows per landing | Off | Off: rent doubles with each airport the owner holds. On: each airport starts at $25 and doubles every time someone lands on it, up to $3200 |
+| Airport rent grows per landing | Off | Off: rent doubles with each airport the owner holds. On: rent starts at $25 and doubles with every paid landing |
+| Airport rent maximum | $3200 | Where the per-landing rent stops growing: $200, $400, $800, $1600 or $3200 |
+| Shared between airports | On | A landing on any of an owner's airports raises the rent at all of them. Off: each airport counts its own landings |
 | Even build | Off | Houses must be built and sold evenly across a set |
 | Randomize player order | On | Shuffle seats when the game starts |
 
@@ -80,6 +83,7 @@ Open the `https://…` address the tunnel prints, create a game there, and send 
 | `public/maps.js` | Board layouts, rent tables and the random board generator, shared by server and browser |
 | `public/app.js` | The client: board, panels, popups, animations |
 | `public/dice.js` | The 3D dice renderer (2D canvas, no CSS 3D) |
+| `public/skins.js` | The sixty player appearances, shared by server and browser |
 | `public/style.css`, `public/index.html` | Styles and page shell |
 | `test/sim.js` | A scripted player for running whole games against the server |
 

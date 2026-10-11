@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, airportVisitRent, COMPANY_MULT, randomMap } = require('./public/maps.js');
+const { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap } = require('./public/maps.js');
 
 const PORT = process.env.PORT || 3000;
 // Test-only: SPEED=40 shrinks every animation/bot delay so a scripted game finishes in seconds.
@@ -19,8 +19,9 @@ const MIME = {
 };
 
 const BASE_COLORS = ['#c0dc52', '#ffc83d', '#ff8438', '#c8474b', '#5a9be0', '#7fe3f4', '#1a9a8a', '#6fe85a', '#a37563', '#c940a8', '#ff7ca0', '#8456dc'];
-// Special appearances are keyed by their own colour; the client draws the matching character.
-const SKIN_COLORS = ['#2e8b57', '#f0a92b', '#4b3fb5', '#8c3b2e', '#9aa7b5', '#e9cfa6', '#39d98a', '#3a3f58', '#2274a5', '#f4f4f6'];
+// Appearances are keyed by their own colour (see public/skins.js); the client draws the matching character.
+// The plain base colours are still accepted so older links keep working.
+const SKIN_COLORS = require('./public/skins.js').SKINS.map((k) => k.color);
 const COLORS = [...BASE_COLORS, ...SKIN_COLORS];
 const BOT_A = ['Sneaky', 'Lucky', 'Greedy', 'Jolly', 'Witty', 'Bold', 'Thrifty', 'Fancy', 'Shady', 'Mighty', 'Clever', 'Dizzy'];
 const BOT_B = ['Baron', 'Tycoon', 'Banker', 'Mogul', 'Broker', 'Investor', 'Landlord', 'Dealer', 'Magnate', 'Trader', 'Duke', 'Fox'];
@@ -77,7 +78,7 @@ class Room {
     this.settings = {
       maxPlayers: 4, map: 'classic', doubleRent: true, vacationCash: true, auction: false,
       noRentInPrison: true, mortgage: false, evenBuild: false, startingCash: 3000, randomOrder: true,
-      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false,
+      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false, airportShared: true, airportCap: 3200, fastGame: false,
     };
     this.chat = [];
     this.timers = new Set();
@@ -152,7 +153,12 @@ class Room {
       return this.settings.doubleRent && this.ownsSet(o.owner, i) ? table[0] * 2 : table[0];
     }
     const n = this.setOf(i).filter((j) => this.owned[j] && this.owned[j].owner === o.owner).length;
-    if (t.type === 'airport') return this.settings.airportRepeat ? airportVisitRent(o.visits || 0) : AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1];
+    if (t.type === 'airport') {
+      if (!this.settings.airportRepeat) return AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1];
+      // Per-landing rule: the count is shared by all of the owner's airports, or kept per airport.
+      const visits = this.settings.airportShared ? this.byId(o.owner).airportVisits || 0 : o.visits || 0;
+      return airportVisitRent(visits, this.settings.airportCap);
+    }
     return COMPANY_MULT[Math.min(n, COMPANY_MULT.length) - 1] * diceSum;
   }
 
@@ -166,12 +172,12 @@ class Room {
   // ---------- state sync ----------
   state() {
     return {
-      seq: ++this.seq, ver: 2, build: BUILD,
+      seq: ++this.seq, ver: 4, build: BUILD,
       code: this.code, hostId: this.hostId, phase: this.phase, settings: this.settings,
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
       players: this.players.map((p) => ({
         id: p.id, name: p.name, color: p.color, money: p.money, pos: p.pos, inJail: p.inJail, jailTurns: p.jailTurns,
-        pardons: p.pardons, bankrupt: p.bankrupt, bot: p.bot, connected: p.connected, skip: !!p.skip,
+        pardons: p.pardons, bankrupt: p.bankrupt, bot: p.bot, connected: p.connected, skip: !!p.skip, av: p.airportVisits || 0,
       })),
       turn: this.phase === 'playing' && this.cur() ? this.cur().id : null,
       tp: this.tp, again: this.again, dice: this.dice, rollId: this.rollId,
@@ -184,6 +190,16 @@ class Room {
 
   broadcast() {
     this.lastActive = Date.now();
+    // Fast game: whenever the player to act is in debt, settle it before anyone sees the state.
+    if (this.phase === 'playing' && this.settings.fastGame && (this.tp === 'roll' || this.tp === 'end')) this.autoSell(this.cur());
+    // Fast game: a finished turn passes on by itself after a moment, unless the player is still in debt.
+    if (this.phase === 'playing' && this.settings.fastGame && this.tp === 'end' && this.autoEndEpoch !== this.epoch) {
+      const p = this.cur();
+      if (p && !p.bankrupt && p.money >= 0) {
+        this.autoEndEpoch = this.epoch;
+        this.after(1200, () => { if (this.phase === 'playing' && this.tp === 'end' && this.cur() === p && p.money >= 0) this.nextTurn(); });
+      }
+    }
     const st = this.state();
     for (const c of this.clients) send(c.ws, { type: 'state', state: st, you: c.player ? c.player.id : null });
     this.pokeBots();
@@ -194,7 +210,7 @@ class Room {
     const p = {
       id: crypto.randomBytes(4).toString('hex'), token: crypto.randomBytes(12).toString('hex'),
       name, color, money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0,
-      bankrupt: false, bot: !!bot, connected: true, doubles: 0, skip: false,
+      bankrupt: false, bot: !!bot, connected: true, doubles: 0, skip: false, airportVisits: 0,
     };
     this.players.push(p);
     if (!this.hostId && !bot) this.hostId = p.id;
@@ -224,7 +240,7 @@ class Room {
       this.mapSeed = ++this.uid;
     }
     if (this.settings.randomOrder) shuffle(this.players);
-    for (const p of this.players) Object.assign(p, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false });
+    for (const p of this.players) Object.assign(p, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false, airportVisits: 0 });
     const keepLog = this.log;
     this.resetGame();
     this.log = keepLog;
@@ -345,7 +361,15 @@ class Room {
         break;
       case 'city': case 'airport': case 'company': {
         const o = this.owned[p.pos];
-        if (!o) { this.tp = 'buy'; return this.broadcast(); }
+        if (!o) {
+          // Fast game: no buy prompt. Take it if affordable, otherwise auction it (when enabled) or move on.
+          if (this.settings.fastGame) {
+            if (p.money >= t.price) return this.buy(p);
+            return this.settings.auction ? this.startAuction(p) : this.finish(p);
+          }
+          this.tp = 'buy';
+          return this.broadcast();
+        }
         if (o.owner === p.id || o.mortgaged) break;
         const owner = this.byId(o.owner);
         if (this.settings.noRentInPrison && owner.inJail) {
@@ -354,7 +378,10 @@ class Room {
         }
         this.pay(p, this.rent(p.pos, diceSum || this.dice[0] + this.dice[1]), owner);
         // "Repeat" airports: every paid landing doubles the next rent at that airport.
-        if (t.type === 'airport' && this.settings.airportRepeat) o.visits = (o.visits || 0) + 1;
+        if (t.type === 'airport' && this.settings.airportRepeat) {
+          if (this.settings.airportShared) owner.airportVisits = (owner.airportVisits || 0) + 1;
+          else o.visits = (o.visits || 0) + 1;
+        }
         break;
       }
       case 'taxpct': {
@@ -392,8 +419,68 @@ class Room {
     this.finish(p);
   }
 
+  // Fast game: a player in debt has their least useful holdings sold to the bank until they are solvent.
+  // Order: loose properties (blocked city sets first, then lowest current rent), then buildings (tallest first),
+  // then properties of full sets (lowest rent first). Mortgaged properties are skipped: selling them pays nothing.
+  autoSell(p) {
+    if (!p || p.bankrupt || p.money >= 0) return;
+    const rentNow = (i) => this.rent(i, 7);
+    const blocked = (i) => this.tiles[i].type === 'city' && this.setOf(i).some((j) => this.owned[j] && this.owned[j].owner !== p.id);
+    const sold = [], trimmed = {};
+    const sellProp = (i) => { const amount = this.tiles[i].price / 2; delete this.owned[i]; p.money += amount; sold.push([i, amount]); };
+    for (let guard = 0; guard < 300 && p.money < 0; guard++) {
+      const mine = this.propsOf(p);
+      const loose = mine.filter((i) => !this.owned[i].mortgaged && !this.ownsSet(p.id, i));
+      if (loose.length) {
+        sellProp(loose.sort((a, b) => (blocked(b) ? 1 : 0) - (blocked(a) ? 1 : 0) || rentNow(a) - rentNow(b) || this.tiles[a].price - this.tiles[b].price)[0]);
+        continue;
+      }
+      const built = mine.filter((i) => this.owned[i].houses > 0);
+      if (built.length) {
+        const i = built.sort((a, b) => this.owned[b].houses - this.owned[a].houses || this.tiles[a].price - this.tiles[b].price)[0];
+        this.owned[i].houses--;
+        p.money += houseCost(this.tiles[i].price) / 2;
+        trimmed[i] = (trimmed[i] || 0) + 1;
+        continue;
+      }
+      const rest = mine.filter((i) => !this.owned[i].mortgaged);
+      if (!rest.length) break;
+      sellProp(rest.sort((a, b) => rentNow(a) - rentNow(b) || this.tiles[a].price - this.tiles[b].price)[0]);
+    }
+    for (const [i, n] of Object.entries(trimmed)) this.say(this.P(p), ` sold ${n} building${n > 1 ? 's' : ''} on `, this.TL(+i), ' to cover a debt');
+    for (const [i, amount] of sold) this.say(this.P(p), ' sold ', this.TL(i), ` for $${amount} to cover a debt`);
+  }
+
+  // Fast game: spend what the player has on houses and hotels, lowest building first (highest price on ties),
+  // until nothing more is affordable or every city in their full sets is at the room's limit.
+  autoBuild(p) {
+    if (!p || p.bankrupt) return;
+    const top = 4 + this.settings.maxHotels, added = {};
+    for (let guard = 0; guard < 400; guard++) {
+      const options = this.propsOf(p).filter((i) => {
+        const t = this.tiles[i], o = this.owned[i];
+        if (t.type !== 'city' || o.houses >= top || !this.ownsSet(p.id, i)) return false;
+        const set = this.setOf(i);
+        if (set.some((j) => this.owned[j].mortgaged)) return false;
+        if (this.settings.evenBuild && o.houses > Math.min(...set.map((j) => this.owned[j].houses))) return false;
+        return p.money >= houseCost(t.price);
+      });
+      if (!options.length) break;
+      const i = options.sort((a, b) => this.owned[a].houses - this.owned[b].houses || this.tiles[b].price - this.tiles[a].price)[0];
+      p.money -= houseCost(this.tiles[i].price);
+      this.owned[i].houses++;
+      added[i] = true;
+    }
+    for (const i of Object.keys(added).map(Number)) {
+      const h = this.owned[i].houses;
+      const what = h > 5 ? `${h - 4} hotels` : h === 5 ? 'a hotel' : h === 1 ? '1 house' : `${h} houses`;
+      this.say(this.P(p), ' built ', this.TL(i), ` up to ${what}`);
+    }
+  }
+
   finish(p) {
     if (this.phase !== 'playing' || p.bankrupt) return;
+    if (this.settings.fastGame) this.autoBuild(p);
     this.tp = this.again && !p.inJail ? 'roll' : 'end';
     this.broadcast();
   }
@@ -522,6 +609,7 @@ class Room {
     }
     this.turnIdx = i;
     this.tp = 'roll';
+    if (this.settings.fastGame) this.autoBuild(this.cur());
     this.broadcast();
   }
 
@@ -746,11 +834,12 @@ class Room {
       case 'setting': {
         if (!host || this.phase !== 'lobby') return;
         const s = this.settings, v = m.value;
-        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'vacationSkip'];
+        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'airportShared', 'vacationSkip', 'fastGame'];
         if (bools.includes(m.key)) s[m.key] = !!v;
         else if (m.key === 'maxPlayers' && Number.isInteger(v) && v >= 2 && v <= 8 && v >= this.players.length) s.maxPlayers = v;
         else if (m.key === 'startingCash' && [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000].includes(v)) s.startingCash = v;
         else if (m.key === 'maxHotels' && [1, 2, 3].includes(v)) s.maxHotels = v;
+        else if (m.key === 'airportCap' && AIRPORT_CAPS.includes(v)) s.airportCap = v;
         else if (m.key === 'map' && MAPS[v]) {
           s.map = v;
           // Picking Generated (again) deals a fresh board; every client gets the layout in the state.
@@ -762,7 +851,7 @@ class Room {
         if (!host || this.phase !== 'lobby') return;
         if (this.players.length >= this.settings.maxPlayers) return this.err(client, 'The room is full');
         const unused = (list) => list.filter((c) => !this.players.some((x) => x.color === c));
-        const color = shuffle(unused(BASE_COLORS).length ? unused(BASE_COLORS) : unused(COLORS))[0];
+        const color = shuffle(unused(SKIN_COLORS).length ? unused(SKIN_COLORS) : unused(COLORS))[0];
         let name;
         do { name = `${BOT_A[rnd(BOT_A.length)]} ${BOT_B[rnd(BOT_B.length)]}`; } while (this.players.some((x) => x.name === name));
         this.addPlayer(name, color, true);
@@ -793,7 +882,7 @@ class Room {
         this.resetGame();
         this.players = this.players.filter((x) => x.bot || x.connected);
         this.fixHost();
-        for (const x of this.players) Object.assign(x, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false });
+        for (const x of this.players) Object.assign(x, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false, airportVisits: 0 });
         return this.broadcast();
     }
 

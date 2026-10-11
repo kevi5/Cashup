@@ -170,11 +170,12 @@
   function houseCost(price) { return price < 130 ? 50 : price < 210 ? 100 : price < 290 ? 150 : price < 450 ? 200 : 300; }
   // Airport rent doubles with every airport the owner holds.
   const AIRPORT_RENT = [25, 50, 100, 200, 400, 800, 1600, 3200];
-  // Alternative rule: rent doubles each time someone lands on that airport (capped).
-  const airportVisitRent = (visits) => Math.min(3200, 25 * 2 ** visits);
+  // Alternative rule: rent starts at $25 and doubles with every paid landing, up to a cap the room chooses.
+  const AIRPORT_CAPS = [200, 400, 800, 1600, 3200];
+  const airportVisitRent = (visits, cap) => Math.min(cap || 3200, 25 * 2 ** visits);
   const COMPANY_MULT = [4, 10, 20, 30, 40, 50];
 
-  const api = { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, airportVisitRent, COMPANY_MULT, randomMap };
+  const api = { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else Object.assign(root, api);
 })(typeof self !== 'undefined' ? self : this);

@@ -1,5 +1,5 @@
 'use strict';
-/* global MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, airportVisitRent, COMPANY_MULT, Dice */
+/* global SKINS, INK, MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, Dice */
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -116,52 +116,19 @@ const I = {
 };
 
 // ---------- art ----------
-// Special appearances: original characters built from the same token, keyed by colour.
-// back = drawn behind the body, mid = on the body under the eyes, eyes = replaces the default eyes, front = on top.
-const INK = '#1d1a26';
+// Appearances are defined in skins.js and identified by their colour. A colour with no appearance
+// (older rooms) draws as a plain token.
 const EYES = '<ellipse cx="59" cy="43" rx="13" ry="15" fill="#fff"/><ellipse cx="85" cy="45" rx="11" ry="13" fill="#fff"/>'
   + `<circle cx="64" cy="47" r="6.5" fill="${INK}"/><circle cx="89" cy="48" r="5.5" fill="${INK}"/>`;
-const MANE = Array.from({ length: 12 }, (_, k) => `<circle cx="${(50 + 48 * Math.cos(k * Math.PI / 6)).toFixed(1)}" cy="${(50 + 48 * Math.sin(k * Math.PI / 6)).toFixed(1)}" r="15" fill="#a8581a"/>`).join('');
-const SKINS = [
-  { name: 'Tycoon', color: '#2e8b57',
-    front: `<g transform="rotate(-8 48 8)"><rect x="24" y="-22" width="48" height="32" rx="4" fill="${INK}"/><rect x="24" y="0" width="48" height="8" fill="#e8c14a"/><rect x="10" y="6" width="76" height="9" rx="4.5" fill="${INK}"/></g>`
-      + '<path d="M40 80l12 6-12 6zM64 80l-12 6 12 6z" fill="#e8c14a"/><circle cx="52" cy="86" r="3" fill="#b8912a"/>' },
-  { name: 'Lion', color: '#f0a92b', back: MANE,
-    front: '<path d="M68 60h14l-7 8z" fill="#5a2d0c"/><path d="M75 68v6M75 74q-6 6-11 1M75 74q6 6 11 1" stroke="#5a2d0c" stroke-width="2.5" fill="none" stroke-linecap="round"/>' },
-  { name: 'King', color: '#4b3fb5',
-    front: '<path d="M20 14l6-28 14 18 10-24 10 24 14-18 6 28z" fill="#ffd23f" stroke="#c9972a" stroke-width="2" stroke-linejoin="round"/>'
-      + '<circle cx="50" cy="4" r="4" fill="#e53935"/><circle cx="32" cy="6" r="3" fill="#4dd0e1"/><circle cx="68" cy="6" r="3" fill="#4dd0e1"/>' },
-  { name: 'Pirate', color: '#8c3b2e',
-    mid: '<path d="M7 38C12 14 30 5 50 5s38 9 43 33z" fill="#d7332f"/><circle cx="6" cy="40" r="7" fill="#d7332f"/><path d="M2 44l-8 14 12-6z" fill="#d7332f"/>',
-    eyes: `<ellipse cx="85" cy="50" rx="11" ry="13" fill="#fff"/><circle cx="89" cy="53" r="5.5" fill="${INK}"/><ellipse cx="59" cy="50" rx="13" ry="12" fill="${INK}"/><path d="M34 40l62 6" stroke="${INK}" stroke-width="4"/>` },
-  { name: 'Robot', color: '#9aa7b5',
-    back: '<path d="M50 6V-10" stroke="#6b7785" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="-14" r="7" fill="#ff5252"/>',
-    eyes: '<rect x="47" y="31" width="24" height="24" rx="5" fill="#12202b"/><rect x="75" y="33" width="20" height="22" rx="5" fill="#12202b"/><circle cx="60" cy="43" r="5.5" fill="#4dd0e1"/><circle cx="86" cy="44" r="5" fill="#4dd0e1"/>',
-    front: '<path d="M52 72h32M60 67v10M68 67v10M76 67v10" stroke="#5c6875" stroke-width="3" stroke-linecap="round"/>' },
-  { name: 'Cat', color: '#e9cfa6',
-    back: '<path d="M14 32L8-6 42 12z" fill="#e9cfa6"/><path d="M86 32L94-6 58 12z" fill="#e9cfa6"/><path d="M17 20l-3-16 15 8z" fill="#f2a0a0"/><path d="M84 20l4-16-16 8z" fill="#f2a0a0"/>',
-    front: '<path d="M69 60h10l-5 6z" fill="#e57373"/><path d="M80 64l20-5M80 68l20 3M66 64l-20-3M66 68l-20 5" stroke="#8a6a45" stroke-width="2" stroke-linecap="round"/>' },
-  { name: 'Alien', color: '#39d98a',
-    back: '<path d="M34 12L24-10M66 12l10-22" stroke="#39d98a" stroke-width="5" stroke-linecap="round"/><circle cx="24" cy="-12" r="7" fill="#b9ffd9"/><circle cx="76" cy="-12" r="7" fill="#b9ffd9"/>',
-    eyes: '<ellipse cx="57" cy="46" rx="13" ry="19" fill="#12202b" transform="rotate(-18 57 46)"/><ellipse cx="86" cy="48" rx="10" ry="16" fill="#12202b" transform="rotate(14 86 48)"/><circle cx="60" cy="38" r="3.5" fill="#fff"/><circle cx="88" cy="41" r="3" fill="#fff"/>' },
-  { name: 'Ninja', color: '#3a3f58',
-    back: '<path d="M8 28l-22-10 4 16z" fill="#e53935"/><path d="M8 32l-20 4 8 10z" fill="#c62828"/>',
-    mid: '<rect x="20" y="28" width="78" height="34" rx="16" fill="#f0d9b5"/><path d="M6 24q44-14 88 0" stroke="#e53935" stroke-width="8" fill="none"/>' },
-  { name: 'Wizard', color: '#2274a5',
-    front: '<path d="M16 14L54-46 84 14z" fill="#3b2a7a"/><ellipse cx="50" cy="14" rx="46" ry="9" fill="#4a3696"/><path d="M52-16l3 7h7l-6 4 2 7-6-4-6 4 2-7-6-4h7z" fill="#ffd23f"/>'
-      + '<path d="M44 70q26 34 50 0-25 12-50 0z" fill="#f4f4f6"/>' },
-  { name: 'Panda', color: '#f4f4f6',
-    back: `<circle cx="18" cy="14" r="16" fill="${INK}"/><circle cx="82" cy="14" r="16" fill="${INK}"/>`,
-    mid: `<ellipse cx="58" cy="46" rx="18" ry="21" fill="${INK}" transform="rotate(-15 58 46)"/><ellipse cx="87" cy="48" rx="13" ry="18" fill="${INK}"/>`,
-    eyes: `<ellipse cx="60" cy="45" rx="9" ry="10" fill="#fff"/><ellipse cx="87" cy="47" rx="7" ry="9" fill="#fff"/><circle cx="63" cy="47" r="5" fill="${INK}"/><circle cx="89" cy="49" r="4" fill="${INK}"/>`,
-    front: `<ellipse cx="75" cy="68" rx="6" ry="4" fill="${INK}"/>` },
-];
 const SKIN = Object.fromEntries(SKINS.map((k) => [k.color, k]));
+let clipSeq = 0;
 function tokenSVG(color) {
-  const k = SKIN[color] || {};
+  const k = SKIN[color] || {}, id = `tc${++clipSeq}`;
+  // the "mid" layer (stripes, bellies, masks) is clipped to the round body
+  const mid = k.mid ? `<clipPath id="${id}"><circle cx="50" cy="50" r="45"/></clipPath><g clip-path="url(#${id})">${k.mid}</g>` : '';
   return `<svg class="tok" viewBox="0 0 100 100">${k.back || ''}<path fill="${color}" d="M50 5C76 5 95 24 95 50S76 95 50 95 5 76 5 50 24 5 50 5z"/>`
     + '<path fill="rgba(0,0,0,.2)" d="M7 58c7 22 24 37 43 37s36-15 43-37C83 74 68 82 50 82S17 74 7 58z"/>'
-    + `${k.mid || ''}${k.eyes || EYES}${k.front || ''}</svg>`;
+    + `${mid}${k.eyes || EYES}${k.front || ''}</svg>`;
 }
 const CHEST = '<svg viewBox="0 0 64 64"><defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb23e"/><stop offset="1" stop-color="#e2741a"/></linearGradient></defs>'
   + '<path d="M8 28c0-10 8-16 24-16s24 6 24 16v4H8z" fill="#f59a23"/><rect x="8" y="30" width="48" height="24" rx="4" fill="url(#cg)"/>'
@@ -213,7 +180,7 @@ let S = null, prevS = null, myId = null;
 let TILES = [], G = null, boardMap = null, tileEls = [];
 const tokEls = {}, animUntil = {};
 let lastMoveId = null, lastRollId = null, logSeen = 0, shownCard = null, cardTimer = null;
-let openProp = null, modal = null, pickMode = false, selColor = null, pendingName = '', moreSkins = false;
+let openProp = null, modal = null, pickMode = false, selColor = null, pendingName = '';
 const cache = {};
 
 const wsSend = (o) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -326,11 +293,20 @@ function fitNames() {
   });
 }
 
-// Houses are written as icon × count (🏠×3), never as repeated icons. One hotel is just its icon; more get a count.
-const buildings = (h) => (h > 5 ? `🏨×${h - 4}` : h === 5 ? '🏨' : h ? `🏠×${h}` : '');
+// Small white building icons (drawn for this project) so they stay readable on any owner colour.
+const HOUSE = '<svg class="hs" viewBox="0 0 24 24"><path fill="#fff" d="M12 3 2.5 11.5H5V20h14v-8.5h2.5z"/></svg>';
+const HOTEL = '<svg class="hs" viewBox="0 0 24 24"><path fill="#fff" fill-rule="evenodd" d="M5 21V4h14v17h-5v-4h-4v4zM8 7h3v3H8zm5 0h3v3h-3zM8 12h3v3H8zm5 0h3v3h-3z"/></svg>';
+// Houses are written as icon × count, never as repeated icons. One hotel is just its icon; more get a count.
+const buildings = (h) => (h > 5 ? `${HOTEL}×${h - 4}` : h === 5 ? HOTEL : h ? `${HOUSE}×${h}` : '');
 const maxLevel = () => 4 + (S.settings.maxHotels || 1);
 // Board amounts are written like the price tags: number first, small $ after.
 const money = (n) => `${n}<small>$</small>`;
+// Paid landings counted for an airport under the per-landing rule: shared by the owner's airports, or its own.
+function airportVisits(o) {
+  if (!o) return 0;
+  const owner = pl(o.owner);
+  return S.settings.airportShared ? (owner && owner.av) || 0 : o.visits || 0;
+}
 function currentRent(i) {
   const t = TILES[i], o = S.owned[i];
   if (o.mortgaged) return '';
@@ -342,7 +318,7 @@ function currentRent(i) {
     return money(S.settings.doubleRent && full ? table[0] * 2 : table[0]);
   }
   const n = TILES.filter((x) => x.type === t.type && mine(x)).length;
-  if (t.type === 'airport' && S.settings.airportRepeat) return money(airportVisitRent(o.visits || 0));
+  if (t.type === 'airport' && S.settings.airportRepeat) return money(airportVisitRent(airportVisits(o), S.settings.airportCap));
   return t.type === 'airport' ? money(AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1]) : `${COMPANY_MULT[Math.min(n, COMPANY_MULT.length) - 1]}× dice`;
 }
 
@@ -506,6 +482,8 @@ function centerHTML() {
     const skip = S.settings.auction ? `${I.gavel} Auction` : S.again ? `${I.x} Skip` : `${I.check} End turn`;
     return `<button class="btn" data-act="skip">${skip}</button><button class="btn" data-act="buy" ${m.money < t.price ? 'disabled' : ''}>${I.cart} Buy for $${t.price}</button>`;
   }
+  // Fast game on a server that ends turns itself (ver 4+): no button unless the player is stuck in debt.
+  if (S.tp === 'end' && S.settings.fastGame && S.ver >= 4 && m.money >= 0) return '<div class="status" style="color:var(--muted)">Ending your turn…</div>';
   if (S.tp === 'end') return `<button class="btn" data-act="endTurn" ${m.money < 0 ? 'disabled' : ''}>${I.check} End turn</button>${debt}`;
   return '';
 }
@@ -583,12 +561,15 @@ function settingsHTML() {
     <h3>Gameplay rules</h3>
     ${tog('doubleRent', '🪙', 'x2 rent on full-set properties', 'If a player owns a full property set, the base rent payment will be doubled')}
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
+    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. Your turn ends automatically, and if you run out of cash your least useful properties are sold automatically') : ''}
     ${'vacationSkip' in s ? tog('vacationSkip', '⏭️', 'Vacation skips a turn', 'A player who lands on Vacation misses their next turn') : ''}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
     ${tog('mortgage', '🏦', 'Mortgage', "Mortgage a property for its sell value (50%). It earns no rent, and if you don't lift the mortgage within 5 of your turns it goes back to the bank")}
     ${'moveAfterPrison' in s ? tog('moveAfterPrison', '🚪', 'Move after paying out of prison', 'When on, you roll and move on the turn you pay or use a pardon card. When off, that ends your turn and you move on your next one. Rolling doubles always gets you out and moving, with no extra roll') : ''}
-    ${'airportRepeat' in s ? tog('airportRepeat', '✈️', 'Airport rent grows per landing', 'When off, airport rent doubles with each airport the owner holds. When on, each airport starts at $25 and doubles every time someone lands on it (up to $3200)') : ''}
+    ${'airportRepeat' in s ? tog('airportRepeat', '✈️', 'Airport rent grows per landing', 'When off, airport rent doubles with each airport the owner holds. When on, rent starts at $25 and doubles with every paid landing, up to the maximum below') : ''}
+    ${'airportCap' in s ? `<div class="srow sub${s.airportRepeat ? '' : ' off'}"><span class="ico"></span><div><b>Airport rent maximum</b><small>Where the per-landing rent stops growing</small></div>${sel('airportCap', AIRPORT_CAPS, (o) => `$${o}`)}</div>
+    ${tog('airportShared', '', 'Shared between airports', "A landing on any of an owner's airports raises the rent at all of them. When off, each airport counts its own landings").replace('class="srow"', `class="srow sub${s.airportRepeat ? '' : ' off'}"`)}` : ''}
     ${'maxHotels' in s ? `<div class="srow"><span class="ico">🏨</span><div><b>Hotels per property</b><small>How many hotels can be stacked on one city after its four houses. Two pay 1.5× the hotel rent, three pay 2×</small></div>${sel('maxHotels', [1, 2, 3], (o) => o)}</div>` : ''}
     ${tog('evenBuild', '🏘️', 'Even build', 'Houses and hotels must be built up and sold off evenly within a property set')}
     <div class="srow"><span class="ico">💰</span><div><b>Starting cash</b><small>Adjust how much money players start the game with</small></div>${sel('startingCash', [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000], (o) => `$${o}`)}</div>
@@ -651,14 +632,16 @@ function renderOverlay() {
       key = 'full';
       html = '<h2>The room is full.</h2><a class="btn ghost" href="/">Return to lobby</a>';
     } else {
-      if (!selColor || taken.includes(selColor)) { const open = COLORS.filter((c) => !taken.includes(c)); selColor = (me() && me().color) || open[rnd(open.length)] || SKINS.map((k) => k.color).find((c) => !taken.includes(c)); }
-      if (SKIN[selColor]) moreSkins = true;
-      key = `pick|${taken.join()}|${selColor}|${pickMode}|${moreSkins}`;
+      // Older servers only know the first ten appearances.
+      const offer = S.ver >= 3 ? SKINS : SKINS.slice(0, 10);
+      if (!selColor || taken.includes(selColor) || !offer.some((k) => k.color === selColor)) {
+        const open = offer.filter((k) => !taken.includes(k.color));
+        selColor = me() && offer.some((k) => k.color === me().color) ? me().color : (open[rnd(open.length)] || {}).color;
+      }
+      key = `pick|${taken.join()}|${selColor}|${pickMode}|${offer.length}`;
       html = (me() ? '' : `<input class="field" id="joinName" maxlength="16" placeholder="Your name" value="${esc(pendingName)}">`)
-        + '<div>Select your player appearance:</div><div class="colors">'
-        + COLORS.map((c) => `<button style="--c:${c}" class="${c === selColor ? 'sel' : ''}" data-act="color" data-c="${c}" ${taken.includes(c) ? 'disabled' : ''}>${c === selColor ? tokenSVG(c) : ''}</button>`).join('')
-        + `</div><button class="link" data-act="moreSkins">${moreSkins ? 'Fewer appearances' : 'More appearances'} ${moreSkins ? '▴' : '▾'}</button>`
-        + (moreSkins ? `<div class="colors skins">${SKINS.map((k) => `<button style="--c:${k.color}" class="skin ${k.color === selColor ? 'sel' : ''}" data-act="color" data-c="${k.color}" title="${k.name}" ${taken.includes(k.color) ? 'disabled' : ''}>${tokenSVG(k.color)}</button>`).join('')}</div>` : '')
+        + `<div>Select your player appearance: <b>${SKIN[selColor] ? esc(SKIN[selColor].name) : ''}</b></div>`
+        + `<div class="skins" id="skinGrid">${offer.map((k) => `<button style="--c:${k.color}" class="skin ${k.color === selColor ? 'sel' : ''}" data-act="color" data-c="${k.color}" title="${k.name}" ${taken.includes(k.color) ? 'disabled' : ''}>${tokenSVG(k.color)}<span>${k.name}</span></button>`).join('')}</div>`
         + `<button class="btn" data-act="${me() ? 'savePick' : 'join'}">${me() ? 'Save' : 'Join game'} ${I.arrow}</button>`;
     }
   } else if (S.phase === 'over') {
@@ -670,7 +653,9 @@ function renderOverlay() {
   }
   ov.hidden = !key;
   if (key && cache.overlay !== key) {
+    const grid = $('#skinGrid'), scrolled = grid ? grid.scrollTop : 0;   // keep the picker where the player scrolled to
     cache.overlay = key; ov.innerHTML = html;
+    if ($('#skinGrid')) $('#skinGrid').scrollTop = scrolled;
     const inp = $('#joinName');
     if (inp) inp.addEventListener('input', () => { pendingName = inp.value; });
   }
@@ -723,8 +708,10 @@ function propHTML(i) {
     const n = owner ? set.filter((x) => S.owned[x.i] && S.owned[x.i].owner === owner.id).length : 0;
     const word = t.type === 'airport' ? 'airport' : 'company';
     if (t.type === 'airport' && S.settings.airportRepeat) {
-      const visits = o ? o.visits || 0 : 0, nth = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
-      rows = nth.map((label, k) => row(`${label} landing${k === 7 ? ' and after' : ''}`, `$${airportVisitRent(k)}`, !!o && !o.mortgaged && Math.min(visits, 7) === k)).join('');
+      const visits = airportVisits(o), cap = S.settings.airportCap || 3200, nth = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+      const last = nth.findIndex((_, k) => airportVisitRent(k, cap) >= cap);
+      rows = nth.slice(0, last + 1).map((label, k) => row(`${label} landing${k === last ? ' and after' : ''}`, `$${airportVisitRent(k, cap)}`, !!o && !o.mortgaged && Math.min(visits, last) === k)).join('')
+        + `<tr><td colspan="2" style="color:#b9b5d8;font-size:12px">${S.settings.airportShared ? "Landings count across all of the owner's airports" : 'Each airport counts its own landings'}</td></tr>`;
     } else {
       rows = set.map((_, k) => row(`${k + 1} ${k ? (word === 'company' ? 'companies' : 'airports') : word} owned`,
         t.type === 'airport' ? `$${AIRPORT_RENT[k]}` : `${COMPANY_MULT[k]}× dice`, n === k + 1 && !o.mortgaged)).join('');
@@ -956,7 +943,6 @@ const ACT = {
     setTimeout(() => { b.innerHTML = `${I.copy} Copy`; }, 1500);
   },
   color(b) { selColor = b.dataset.c; renderOverlay(); },
-  moreSkins() { moreSkins = !moreSkins; renderOverlay(); },
   join() {
     const name = (pendingName || store.get('name') || '').trim() || `Player${10 + rnd(90)}`;
     store.set('name', name);
