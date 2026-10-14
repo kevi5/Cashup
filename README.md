@@ -12,16 +12,19 @@ Inspired by [richup.io](https://richup.io/), with thanks to its creators. See [C
 
 - **Private multiplayer** for 2 to 8 players per room, with optional computer players to fill seats
 - **Server-authoritative rules**: clients only send actions, so everyone always sees the same game
-- **Eleven map options**
+- **Fourteen map options**
   - Classic, Mr. Worldwide (48 tiles), Death Valley, Lucky Wheel
   - Speed Run (28 tiles, quick games), Jet Set (eight airports), Power Grid (six companies), Tax Haven (taxes and refunds everywhere), High Roller (prices up to $800)
+  - For experienced players: Grand Tour (48 tiles, every country has four cities), Sky Empire (twelve airports in clusters), Billionaire Row (prices up to $1200, a second Go to prison mid-board, $250 Premium Tax; best with $6000+ starting cash)
   - **Random** plays one of the above, chosen when the game starts; **Generated** deals a brand-new shuffled board each time you pick it
 - **Full property game**: rent tables, houses and hotels, full-set bonuses, mortgages, auctions, trades between players, prison, Treasure and Surprise cards, taxes, a vacation cash pot, bankruptcy and a winner screen
-- **3D dice** drawn by a small canvas renderer written for this project, hopping tokens, and a one-time celebration when a player completes a set
+- **Cards with choices**: besides the classics, Surprise and Treasure cards can send you to any city you pick on the board, to the city charging the highest rent right now (houses, hotels and unbought cities count), or pay you per property you own or from the richest player
+- **Big-money moments**: paying $500+ rent jolts the board with a stamped OUCH!, and collecting $500+ from rent or the Vacation pot sets off a gold coin fountain
+- **3D dice** drawn by a small canvas renderer written for this project, thrown differently every roll (results come from the system's cryptographic random source), hopping tokens, and a one-time celebration when a player completes a set
 - **60 appearances**, all original characters: animals (lion, fox, panda, shark, dragon…), characters (pirate, astronaut, wizard, vampire, knight…) and a few oddities (pumpkin, cactus, snowman, sun). They are defined in `public/skins.js`
 - **At-a-glance board**: current rent on every owned property, turns left on mortgages, the cash waiting on Vacation, and a highlight when you can afford to build
 - **Stats and profiles**: games played, won and lost, win rate and best winning cash per player, shown on the home page and on the end-of-game screen. Stats are kept by name (case does not matter), so pick a profile button (`vk` and `Tony Wayne` come built in) or type the same name each time. They are saved to `data/stats.json` with a copy in `../cashup-stats-copy.json` (outside the repo folder); if the main file is lost or damaged, the copy is loaded instead. Games against bots count; bots get no stats
-- **Chat**, a scrollable game log you can copy, sound cues with a volume slider, and seats that survive a page refresh
+- **Chat**, a scrollable game log you can copy, sound cues with a volume slider, seats that survive a page refresh, and appearances you can change mid-game
 - Works on desktop and scales down for narrow screens
 
 ## Room settings
@@ -31,7 +34,7 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Maximum players | 4 | 2 to 8 |
-| Board map | Classic | Any of the eleven options above |
+| Board map | Classic | Any of the fourteen options above |
 | Starting cash | $3000 | $500 to $10,000 |
 | x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
@@ -41,10 +44,11 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |
 | Move after paying out of prison | Off | When off, paying or using a pardon card ends your turn and you move on the next one. Rolling doubles always gets you out and moving, with no extra roll |
 | Mortgage | Off | Mortgage for the sell value (50%); lift it within 5 of your turns or the bank takes the property |
-| Hotels per property | 1 | Up to 3. Two hotels pay 1.5× the hotel rent, three pay 2× |
+| Hotels per property | 1 | Up to 5. Each extra hotel adds half the hotel rent: two pay 1.5×, three 2×, four 2.5×, five 3× |
 | Airport rent grows per landing | Off | Off: rent doubles with each airport the owner holds. On: rent starts at $25 and doubles with every paid landing |
 | Airport rent maximum | $3200 | Where the per-landing rent stops growing: $200, $400, $800, $1600 or $3200 |
 | Shared between airports | On | A landing on any of an owner's airports raises the rent at all of them. Off: each airport counts its own landings |
+| Your own landings count | Off | With per-landing airport rent on, landing on your own airport also raises its rent |
 | Even build | Off | Houses must be built and sold evenly across a set |
 | Randomize player order | On | Shuffle seats when the game starts |
 

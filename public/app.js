@@ -78,6 +78,8 @@ const SYNTH = {
   set() { [523, 659, 784, 1047, 1319].forEach((f, i) => pluck(f, i * 0.08, 0.5, 0.09)); pluck(1568, 0.45, 0.8, 0.07); },
   break() { noise(0, 0.09, 0.2, 1400); knock(0.02, 140, 0.24); pluck(311, 0.08, 0.45, 0.1); pluck(220, 0.22, 0.7, 0.1); },
   land() { knock(0, 170, 0.16); noise(0.01, 0.05, 0.05, 700); },
+  ouch() { noise(0, 0.14, 0.28, 900); knock(0.02, 110, 0.32); pluck(233, 0.1, 0.45, 0.1); pluck(175, 0.28, 0.8, 0.1); },
+  jackpot() { [784, 988, 1175, 1568, 1976].forEach((f, i) => pluck(f, i * 0.06, 0.4, 0.08)); [0.36, 0.44, 0.53, 0.64].forEach((t) => pluck(2093 + rnd(500), t, 0.25, 0.04)); },
   coin() { pluck(1319, 0, 0.12, 0.06); pluck(1760, 0.06, 0.12, 0.06); pluck(2093, 0.12, 0.35, 0.06); },
   tax() { pluck(440, 0, 0.18, 0.07); pluck(370, 0.09, 0.18, 0.07); pluck(311, 0.18, 0.4, 0.07); },
   vacation() { [659, 784, 988, 784, 988, 1175].forEach((f, i) => pluck(f, i * 0.09, 0.3, 0.06)); },
@@ -512,6 +514,36 @@ function floatText(i, text, color) {
   $('#board').append(el);
   setTimeout(() => el.remove(), 1500);
 }
+// Rent or a Vacation pot of this much gets the big animations below instead of a floating amount.
+const BIG = 500;
+// Paying a big rent: the board jolts, the tile flashes red and a stamped "OUCH!" slams down on it.
+function bigHit(i, n) {
+  if (!G || !TILES[i] || document.hidden) return;
+  const [x, y] = popNear(i, 190, 100), el = document.createElement('div');
+  el.className = 'bighit';
+  el.style.left = `${x}px`; el.style.top = `${y}px`;
+  el.innerHTML = `<b>OUCH!</b><span>-$${n}</span>`;
+  $('#board').append(el);
+  setTimeout(() => el.remove(), 2200);
+  flash(tileEls[i], 'hitflash', 1300);
+  flash($('#board'), 'quake', 600);
+  sfx('ouch');
+}
+// Collecting a big rent or Vacation pot: a gold "+$N" rises from the player's token in a fountain of coins.
+function bigEarn(p, n) {
+  if (!G || !TILES[p.pos] || document.hidden) return;
+  const [x, y] = tileCenter(p.pos), el = document.createElement('div');
+  el.className = 'bigearn';
+  el.style.left = `${x}px`; el.style.top = `${y}px`;
+  const coins = Array.from({ length: 18 }, () => `<i style="--x:${rnd(160) - 80}px;--y:${-70 - rnd(80)}px;animation-delay:${rnd(250)}ms"></i>`).join('');
+  // the text rises about 140px and is 230px wide: keep it on the board even from a top or side tile
+  const tx = Math.max(130, Math.min(BOARD - 130, x)) - x, ty = Math.max(150, y) - y;
+  el.innerHTML = `${coins}<div class="be-txt" style="left:${tx}px;top:${ty}px"><b>CHA-CHING!</b><span>+$${n}</span></div>`;
+  $('#board').append(el);
+  setTimeout(() => el.remove(), 2400);
+  flash(tokEls[p.id], 'richglow', 1800);
+  sfx('jackpot');
+}
 // A few coins arc from one tile to another (rent changing hands).
 function coinFly(from, to) {
   if (!G || !TILES[from] || !TILES[to] || from === to || document.hidden) return;
@@ -553,12 +585,16 @@ function logFx(e) {
   if ((m = txt.match(/^ (?:passed|landed on) Start and received \$(\d+)/))) { floatText(0, `+$${m[1]}`, '#65e052'); sfx('coin'); }
   else if ((m = txt.match(/^ paid \$(\d+) (?:Earnings|Premium) Tax/))) { floatText(at, `-$${m[1]}`, '#ff6b5e'); sfx('tax'); }
   else if ((m = txt.match(/^ paid \$(\d+) to $/))) {
-    floatText(at, `-$${m[1]}`, '#ff6b5e');
-    const payee = e.parts[2] && pl(e.parts[2].p);
+    const n = +m[1], payee = e.parts[2] && pl(e.parts[2].p);
+    if (n >= BIG) bigHit(at, n); else floatText(at, `-$${n}`, '#ff6b5e');
     if (payee && at !== null) coinFly(at, payee.pos);
+    if (payee && n >= BIG) setTimeout(() => bigEarn(payee, n), 650);   // as the coins arrive
   }
   else if ((m = txt.match(/^ received a \$(\d+) /))) { floatText(at, `+$${m[1]}`, '#65e052'); sfx('coin'); }
-  else if ((m = txt.match(/^ went on vacation and collected \$(\d+)/))) { floatText(at, `+$${m[1]}`, '#65e052'); sfx('vacation'); }
+  else if ((m = txt.match(/^ went on vacation and collected \$(\d+)/))) {
+    if (+m[1] >= BIG && who) bigEarn(who, +m[1]); else floatText(at, `+$${m[1]}`, '#65e052');
+    sfx('vacation');
+  }
   else if (/^ went on vacation/.test(txt)) sfx('vacation');
   else if (/^ joined the game/.test(txt)) sfx('join');
   else if (/^ won the auction/.test(txt)) sfx('gavel');
@@ -652,6 +688,7 @@ function centerHTML() {
   const debt = m.money < 0 ? (grace
     ? `<div class="hint">You are in debt. Sell something yourself in the next few seconds, or the game ${S.settings.mortgage ? 'mortgages' : 'sells'} your least useful properties for you.<div class="au-bar debtbar"><i style="animation-duration:${S.debt.endsIn}ms"></i></div></div>`
     : '<div class="hint">You are in debt. Sell or mortgage properties, or declare bankruptcy.</div>') : '';
+  if (S.tp === 'pickCity') return `<div class="status">🎟️ Click any city on the board to travel there</div>${debt}`;
   if (S.tp === 'roll') {
     let h = '';
     if (m.inJail) {
@@ -718,6 +755,7 @@ function renderPlayers() {
     ].filter(Boolean).join('');
     let html = `<div class="ptok">${tokenSVG(p.color)}</div><div class="pname"><span>${esc(p.name)}</span>${tags}`;
     if (lobby && p.id === myId) html += `<br><button class="appearance" data-act="pick">${I.palette} Change appearance</button>`;
+    else if (p.id === myId && S.phase === 'playing' && !p.bankrupt && S.ver >= 8) html += ` <button class="appearance" data-act="pick" title="Change appearance">${I.palette}</button>`;
     html += '</div>';
     if (!lobby) html += `<div class="money">${p.bankrupt ? 'bankrupt' : `$${p.money}`}</div>`;
     if (host && p.id !== myId && !p.bot && p.connected && 'maxHotels' in S.settings) html += `<button class="x mk" data-act="passHost" data-id="${p.id}" title="Make ${esc(p.name)} the host">${I.crown}</button>`;
@@ -760,7 +798,8 @@ function settingsHTML() {
     ${'airportRepeat' in s ? tog('airportRepeat', '✈️', 'Airport rent grows per landing', 'When off, airport rent doubles with each airport the owner holds. When on, rent starts at $25 and doubles with every paid landing, up to the maximum below') : ''}
     ${'airportCap' in s ? `<div class="srow sub${s.airportRepeat ? '' : ' off'}"><span class="ico"></span><div><b>Airport rent maximum</b><small>Where the per-landing rent stops growing</small></div>${sel('airportCap', AIRPORT_CAPS, (o) => `$${o}`)}</div>
     ${tog('airportShared', '', 'Shared between airports', "A landing on any of an owner's airports raises the rent at all of them. When off, each airport counts its own landings").replace('class="srow"', `class="srow sub${s.airportRepeat ? '' : ' off'}"`)}` : ''}
-    ${'maxHotels' in s ? `<div class="srow"><span class="ico">🏨</span><div><b>Hotels per property</b><small>How many hotels can be stacked on one city after its four houses. Two pay 1.5× the hotel rent, three pay 2×</small></div>${sel('maxHotels', [1, 2, 3], (o) => o)}</div>` : ''}
+    ${'airportSelf' in s ? tog('airportSelf', '', 'Your own landings count', 'Landing on your own airport also raises its rent, just like a paid landing').replace('class="srow"', `class="srow sub${s.airportRepeat ? '' : ' off'}"`) : ''}
+    ${'maxHotels' in s ? `<div class="srow"><span class="ico">🏨</span><div><b>Hotels per property</b><small>How many hotels can be stacked on one city after its four houses. Each extra hotel adds half the hotel rent: two pay 1.5×, three 2×, four 2.5×, five 3×</small></div>${sel('maxHotels', [1, 2, 3, 4, 5], (o) => o)}</div>` : ''}
     ${tog('evenBuild', '🏘️', 'Even build', 'Houses and hotels must be built up and sold off evenly within a property set')}
     <div class="srow"><span class="ico">💰</span><div><b>Starting cash</b><small>Adjust how much money players start the game with</small></div>${sel('startingCash', [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000], (o) => `$${o}`)}</div>
     ${tog('randomOrder', '🔀', 'Randomize player order', 'Randomly reorder players at the beginning of the game')}
@@ -846,7 +885,7 @@ function renderChat() {
 function renderOverlay() {
   const ov = $('#overlay');
   let key = '', html = '';
-  if (S.phase === 'lobby' && (!me() || pickMode)) {
+  if ((S.phase === 'lobby' && !me()) || (pickMode && me() && !me().bankrupt && S.phase !== 'over')) {
     const taken = S.players.filter((p) => p.id !== myId).map((p) => p.color);
     if (!me() && S.players.length >= S.settings.maxPlayers) {
       key = 'full';
@@ -895,7 +934,7 @@ function gameOverHTML() {
   }
   if (!w) return '<div class="go"><h2 class="gotitle">GAME OVER</h2></div>';
   const fall = many(44, () => `<i class="confetti" style="left:${rnd(100)}%;background:${COLORS[rnd(12)]};animation-duration:${2.4 + Math.random() * 2.6}s;animation-delay:${-Math.random() * 5}s"></i>`);
-  const coins = many(14, () => `<i class="coin" style="left:${rnd(100)}%;animation-duration:${1.8 + Math.random() * 1.6}s;animation-delay:${0.6 + Math.random() * 3}s">$</i>`);
+  const coins = many(14, () => `<i class="gocoin" style="left:${rnd(100)}%;animation-duration:${1.8 + Math.random() * 1.6}s;animation-delay:${0.6 + Math.random() * 3}s">$</i>`);
   const burst = many(36, () => {
     const a = Math.random() * Math.PI * 2, d = 120 + Math.random() * 220;
     return `<i class="spark" style="background:${COLORS[rnd(12)]};--x:${Math.round(Math.cos(a) * d)}px;--y:${Math.round(Math.sin(a) * d)}px;animation-delay:${0.25 + Math.random() * 0.15}s"></i>`;
@@ -953,7 +992,7 @@ function propHTML(i) {
   const row = (label, val, on) => `<tr class="${on ? 'on' : ''}"><td>${label}</td><td>${val}</td></tr>`;
   let rows = '';
   if (t.type === 'city') {
-    const labels = ['with rent', 'with one house', 'with two houses', 'with three houses', 'with four houses', 'with a hotel', 'with two hotels', 'with three hotels'];
+    const labels = ['with rent', 'with one house', 'with two houses', 'with three houses', 'with four houses', 'with a hotel', 'with two hotels', 'with three hotels', 'with four hotels', 'with five hotels'];
     rows = labels.slice(0, maxLevel() + 1).map((label, k) => row(label, `$${rentAt(t.price, k)}`, o && !o.mortgaged && o.houses === k)).join('');
   } else {
     const set = TILES.filter((x) => x.type === t.type);
@@ -1131,6 +1170,9 @@ function showBreak({ breaker, victim, tile, others }) {
 }
 
 // ---------- main render ----------
+// A "travel to any city" card is waiting for this player to click a city.
+const picking = () => S.phase === 'playing' && S.turn === myId && S.tp === 'pickCity';
+
 function render() {
   const first = !prevS;
   if (first) {
@@ -1139,6 +1181,7 @@ function render() {
     if (S.phase !== 'lobby' && !myId) toast('Game in progress — you are spectating');
   }
   renderBoard();
+  $('#board').classList.toggle('picking', picking());
   renderTokens(first);
   renderDice(first);
   setHTML($('#actions'), 'actions', centerHTML());
@@ -1287,6 +1330,7 @@ function initRoom() {
     const b = e.target.closest('[data-act]');
     if (b && !b.disabled && ACT[b.dataset.act]) { if (b.dataset.act !== 'mute') sfx('click'); ACT[b.dataset.act](b); return; }
     const tile = e.target.closest('.tile.prop');
+    if (tile && picking()) { if (TILES[+tile.dataset.tile].type === 'city') wsSend({ type: 'goto', tile: +tile.dataset.tile }); return; }
     if (tile) { ACT.prop(tile); return; }
     if (e.target.id === 'modal') { ACT.closeModal(); return; }
     if (openProp !== null && !e.target.closest('#propPop')) ACT.closeProp();

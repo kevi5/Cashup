@@ -1,11 +1,12 @@
 // Joins a room as one scripted human plus bots and plays automatically; reports stalls and errors.
 const WebSocket = require('ws');
+const { MAPS } = require('../public/maps.js');
 const [, , map = 'classic', seconds = '60', auction = '1', port = '3000', stall = '12000'] = process.argv;
 const code = 't' + Math.random().toString(36).slice(2, 6);
 const ws = new WebSocket(`ws://localhost:${port}/ws`);
 const send = (o) => ws.send(JSON.stringify(o));
 const built = new Set();
-let me = null, S = null, lastSeq = 0, lastChange = Date.now(), started = false, errors = [];
+let picks = 0, me = null, S = null, lastSeq = 0, lastChange = Date.now(), started = false, errors = [];
 ws.on('open', () => send({ type: 'hello', room: code }));
 ws.on('message', (raw) => {
   const m = JSON.parse(raw);
@@ -27,11 +28,12 @@ ws.on('message', (raw) => {
   const p = S.players.find((x) => x.id === me);
   if (S.tp === 'auction' && S.auction && S.auction.bidder !== me && p.money > S.auction.bid + 200 && S.auction.bid < 60) return send({ type: 'bid', add: 10 });
   if (S.turn !== me || p.bankrupt) return;
+  if (S.tp === 'pickCity') { picks++; const t = (S.tiles || MAPS[S.mapId].tiles).filter((x) => x.type === 'city'); return send({ type: 'goto', tile: t[Math.floor(Math.random() * t.length)].i }); }
   if (S.tp === 'roll') {
     if (p.money < 0) return send({ type: 'bankrupt' });
     return send({ type: 'roll' });
   }
-  if (S.tp === 'buy') return send({ type: p.money > 300 ? 'buy' : 'skip' });
+  if (S.tp === 'buy') return send({ type: p.money > (S.tiles || MAPS[S.mapId].tiles)[p.pos].price + 100 ? 'buy' : 'skip' });
   if (S.tp === 'end' && p.money > 500) {
     // try to build wherever a full set is owned (server rejects the rest)
     for (const i of Object.keys(S.owned)) if (S.owned[i].owner === me && S.owned[i].houses < 5 && !built.has(i + ':' + S.seq)) { built.add(i + ':' + S.seq); send({ type: 'build', tile: +i }); }
@@ -45,7 +47,7 @@ const iv = setInterval(() => {
 function done(rc) {
   clearInterval(iv);
   const sum = S.players.reduce((a, p) => a + p.money, 0);
-  console.log(`map=${map} phase=${S.phase} seq=${S.seq} owned=${Object.keys(S.owned).length} pot=${S.pot}`);
+  console.log(`map=${map} phase=${S.phase} picks=${picks} seq=${S.seq} owned=${Object.keys(S.owned).length} pot=${S.pot}`);
   console.log(S.players.map((p) => `${p.name}:${p.bankrupt ? 'OUT' : '$' + p.money}${p.inJail ? '(jail)' : ''}`).join('  '));
   console.log('houses:', Object.values(S.owned).reduce((a, o) => a + o.houses, 0), 'mortgaged:', Object.values(S.owned).filter((o) => o.mortgaged).length);
   console.log('log kinds:', [...new Set(S.log.map((e) => e.parts.filter((x) => typeof x === 'string').join('|').replace(/\$\d+/g, '$N').replace(/card: .*/, 'card')))].slice(0, 30).join(' ;; '));

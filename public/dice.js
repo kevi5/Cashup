@@ -56,8 +56,8 @@
     return 0;
   }
   // Resting pose: the rolled face toward the viewer, tipped slightly so the die reads as a solid cube.
-  function restPose(value, index, twist) {
-    return mul(mul(mul(rotX(0.3), rotY(index ? 0.26 : -0.26)), rotZ(twist)), FRONT[value]);
+  function restPose(value, yaw, twist) {
+    return mul(mul(mul(rotX(0.3), rotY(yaw)), rotZ(twist)), FRONT[value]);
   }
   // Orientation at time t: two decaying spins that both reach zero at t = 1, so the die always lands on restPose.
   function poseAt(die, t) {
@@ -88,7 +88,7 @@
   function drawDie(die, t) {
     const R = t >= 1 ? die.rest : poseAt(die, t);
     const h = height(t);
-    const x = die.x + die.dir * 96 * (1 - outCubic(Math.min(1, t / 0.82)));
+    const x = die.x + die.dir * die.slide * (1 - outCubic(Math.min(1, t / 0.82)));
     const y = FLOOR - h;
     const size = SIZE * (1 + h / 900);
     const project = (p) => { const k = CAM / (CAM - p[2]); return [x + p[0] * size * k, y - p[1] * size * k]; };
@@ -144,15 +144,23 @@
     dice.forEach((die) => drawDie(die, Math.max(0, Math.min(1, t - die.delay))));
   }
   function stop() { cancelAnimationFrame(raf); clearTimeout(fallback); raf = 0; }
+  // Every throw is different: the dice fly in from both sides or together from one side, land at varied spots
+  // and angles, and spin about random axes. Only the faces they settle on come from the server.
   function makeDice(values) {
-    return values.map((value, i) => ({
-      value, x: W / 2 + (i ? 54 : -54), dir: i ? 1 : -1, delay: i * 0.06,
-      rest: restPose(value, i, (Math.random() - 0.5) * 0.2),
-      axis1: unit([i ? -1 : 1, 0.25 + Math.random() * 0.6, (Math.random() - 0.5) * 0.7]),
-      axis2: unit([0.2, 1, 0.35 * (i ? -1 : 1)]),
-      turns1: Math.PI * 2 * (2.4 + Math.random() * 0.9),
-      turns2: Math.PI * 2 * (0.7 + Math.random() * 0.5) * (i ? -1 : 1),
-    }));
+    const r = (a, b) => a + Math.random() * (b - a), sign = () => (Math.random() < 0.5 ? -1 : 1);
+    const from = Math.random() < 0.4 ? 0 : sign();   // 0: each die from its own side
+    const shift = r(-14, 14), gap = r(46, 62);
+    return values.map((value, i) => {
+      const side = i ? 1 : -1;
+      return {
+        value, x: W / 2 + shift + side * gap, dir: from || side, slide: r(60, 105), delay: r(0, 0.1),
+        rest: restPose(value, side * r(0.12, 0.38), r(-0.35, 0.35)),
+        axis1: unit([sign(), r(0.1, 0.9), r(-0.6, 0.6)]),
+        axis2: unit([r(-0.4, 0.4), 1, r(-0.5, 0.5)]),
+        turns1: Math.PI * 2 * r(2, 3.6),
+        turns2: Math.PI * 2 * r(0.5, 1.3) * sign(),
+      };
+    });
   }
 
   const api = {

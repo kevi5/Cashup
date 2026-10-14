@@ -78,6 +78,12 @@ const SURPRISE = [
   { text: 'Pardon card! Keep it to walk out of prison for free.', fx: ['pardon'] },
   { text: 'Advance to the priciest city on the board.', fx: ['priciest'] },
   { text: 'You won a crossword contest. Collect $100.', fx: ['money', 100] },
+  { text: 'Free ticket! Advance to any city you choose.', fx: ['choose'] },
+  { text: 'Advance to the city charging the highest rent right now.', fx: ['topRent'] },
+  { text: 'Tailwind! Move forward 5 steps.', fx: ['forward', 5] },
+  { text: 'Take a break. Advance to Vacation.', fx: ['nearest', 'vacation'] },
+  { text: 'Property boom! Collect $25 for every property you own.', fx: ['perProp', 25] },
+  { text: 'Jackpot! Collect $300.', fx: ['money', 300] },
 ];
 const TREASURE = [
   { text: 'Bank error in your favor. Collect $200.', fx: ['money', 200] },
@@ -95,9 +101,14 @@ const TREASURE = [
   { text: 'Second prize in a beauty contest. Collect $10.', fx: ['money', 10] },
   { text: 'You inherit $100.', fx: ['money', 100] },
   { text: 'Advance to Start.', fx: ['start'] },
+  { text: 'The richest other player pays you $100 to keep a secret.', fx: ['fromRichest', 100] },
+  { text: 'Lucky streak. Collect $250.', fx: ['money', 250] },
+  { text: 'Rental income. Collect $15 for every property you own.', fx: ['perProp', 15] },
+  { text: 'Free ticket! Advance to any city you choose.', fx: ['choose'] },
 ];
 
-const rnd = (n) => Math.floor(Math.random() * n);
+// Dice, card shuffles and seat order all draw from the OS's cryptographic random source.
+const rnd = (n) => crypto.randomInt(n);
 const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const isProp = (t) => t.type === 'city' || t.type === 'airport' || t.type === 'company';
 const send = (ws, obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
@@ -111,7 +122,7 @@ class Room {
     this.settings = {
       maxPlayers: 4, map: 'classic', doubleRent: true, vacationCash: true, auction: false,
       noRentInPrison: true, mortgage: false, evenBuild: false, startingCash: 3000, randomOrder: true,
-      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false, airportShared: true, airportCap: 3200, fastGame: false,
+      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false, airportShared: true, airportSelf: false, airportCap: 3200, fastGame: false,
     };
     this.chat = [];
     this.timers = new Set();
@@ -205,7 +216,7 @@ class Room {
   // ---------- state sync ----------
   state() {
     return {
-      seq: ++this.seq, ver: 7, build: BUILD, emote: this.emote || null,
+      seq: ++this.seq, ver: 8, build: BUILD, emote: this.emote || null,
       debt: this.debt ? { pid: this.debt.pid, endsIn: Math.max(0, this.debt.endsAt - Date.now()) } : null,
       code: this.code, hostId: this.hostId, phase: this.phase, settings: this.settings,
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
@@ -376,7 +387,7 @@ class Room {
     this.broadcast();
     this.after(n * ms + 350, () => {
       if (passed) { p.money += PASS_START; this.say(this.P(p), ` passed Start and received $${PASS_START}`); }
-      this.land(p, n);
+      this.land(p);
     });
   }
 
@@ -390,7 +401,7 @@ class Room {
     this.broadcast();
   }
 
-  land(p, diceSum) {
+  land(p) {
     const t = this.tiles[p.pos];
     switch (t.type) {
       case 'start':
@@ -410,18 +421,24 @@ class Room {
           this.tp = 'buy';
           return this.broadcast();
         }
-        if (o.owner === p.id || o.mortgaged) break;
+        if (o.mortgaged) break;
         const owner = this.byId(o.owner);
+        // "Repeat" airports: every paid landing doubles the next rent at that airport; with airportSelf the owner's own landings do too.
+        const bumpAirport = () => {
+          if (this.settings.airportShared) owner.airportVisits = (owner.airportVisits || 0) + 1;
+          else o.visits = (o.visits || 0) + 1;
+        };
+        const repeat = t.type === 'airport' && this.settings.airportRepeat;
+        if (o.owner === p.id) {
+          if (repeat && this.settings.airportSelf) { bumpAirport(); this.say(this.P(p), ' landed on their own airport and raised its rent'); }
+          break;
+        }
         if (this.settings.noRentInPrison && owner.inJail) {
           this.say(this.P(p), ' pays no rent: ', this.P(owner), ' is in prison');
           break;
         }
-        this.pay(p, this.rent(p.pos, diceSum || this.dice[0] + this.dice[1]), owner);
-        // "Repeat" airports: every paid landing doubles the next rent at that airport.
-        if (t.type === 'airport' && this.settings.airportRepeat) {
-          if (this.settings.airportShared) owner.airportVisits = (owner.airportVisits || 0) + 1;
-          else o.visits = (o.visits || 0) + 1;
-        }
+        this.pay(p, this.rent(p.pos, this.dice[0] + this.dice[1]), owner);   // card moves still charge companies by the dice you rolled
+        if (repeat) bumpAirport();
         break;
       }
       case 'taxpct': {
@@ -576,8 +593,54 @@ class Room {
         if (d) return this.moveBy(p, d);
         break;
       }
+      case 'forward': return this.moveBy(p, a);
+      case 'topRent': {
+        // What landing would cost right now: houses, hotels and full-set bonus count; an unbought city counts its base rent.
+        let best = -1, bestRent = -1;
+        for (let d = 1; d < N; d++) {
+          const i = (p.pos + d) % N, o = this.owned[i];
+          if (this.tiles[i].type !== 'city') continue;
+          const r = !o ? rentTable(this.tiles[i].price)[0] : o.mortgaged ? 0 : this.rent(i, 7);
+          if (r > bestRent) { best = d; bestRent = r; }   // strictly greater: the nearest one wins a tie
+        }
+        if (best > 0) return this.moveBy(p, best);
+        break;
+      }
+      case 'choose':
+        if (p.bot) return this.gotoCity(p, this.botPickCity(p));
+        this.tp = 'pickCity';
+        return this.broadcast();
+      case 'perProp': {
+        const n = this.propsOf(p).length;
+        if (n) { p.money += n * a; this.say(this.P(p), ` collected $${n * a} for ${n} ${n === 1 ? 'property' : 'properties'}`); }
+        break;
+      }
+      case 'fromRichest': {
+        const rich = this.active().filter((o) => o !== p).sort((x, y) => y.money - x.money)[0];
+        if (rich) this.pay(rich, a, p);
+        break;
+      }
     }
     this.finish(p);
+  }
+
+  // "Advance to any city": move forward to the chosen city (passing Start pays as usual).
+  gotoCity(p, i) {
+    const N = this.tiles.length, d = (i - p.pos + N) % N;
+    this.say(this.P(p), ' chose to travel to ', this.TL(i));
+    return d ? this.moveBy(p, d) : this.land(p);
+  }
+
+  // A bot spends a free ticket on the best unbought city it can afford (sets it is building or blocking first);
+  // failing that it heads for one of its own cities, and failing that the cheapest rent on the board.
+  botPickCity(p) {
+    const score = (i) => {
+      const t = this.tiles[i], o = this.owned[i];
+      if (!o) return p.money >= t.price ? 1e6 + this.stake(p.id, i) * 1e4 + t.price : -rentTable(t.price)[0];
+      if (o.owner === p.id || o.mortgaged) return 5e5;
+      return -this.rent(i, 7);
+    };
+    return this.tiles.filter((t) => t.type === 'city').map((t) => t.i).sort((x, y) => score(y) - score(x))[0];
   }
 
   buy(p) {
@@ -884,6 +947,7 @@ class Room {
       this.botBuild(p);
       return this.roll(p);
     }
+    if (this.tp === 'pickCity') return this.gotoCity(p, this.botPickCity(p));
     if (this.tp === 'buy') {
       const t = this.tiles[p.pos], k = this.stake(p.id, p.pos);
       // a blocking or set-completing tile is worth spending down to the last dollar
@@ -916,8 +980,14 @@ class Room {
         send(client.ws, { type: 'joined', id: client.player.id, token: client.player.token });
         return this.broadcast();
       }
+      case 'goto': {
+        const i = m.tile;
+        if (!this.isTurn(p) || this.tp !== 'pickCity') return;
+        if (!Number.isInteger(i) || !this.tiles[i] || this.tiles[i].type !== 'city') return this.err(client, 'Pick a city');
+        return this.gotoCity(p, i);
+      }
       case 'appearance':
-        if (!p || this.phase !== 'lobby') return;
+        if (!p || p.bankrupt || this.phase === 'over') return;
         if (!COLORS.includes(m.color) || this.players.some((x) => x.color === m.color)) return this.err(client, 'That appearance is taken');
         p.color = m.color;
         return this.broadcast();
@@ -939,11 +1009,11 @@ class Room {
       case 'setting': {
         if (!host || this.phase !== 'lobby') return;
         const s = this.settings, v = m.value;
-        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'airportShared', 'vacationSkip', 'fastGame'];
+        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'airportShared', 'airportSelf', 'vacationSkip', 'fastGame'];
         if (bools.includes(m.key)) s[m.key] = !!v;
         else if (m.key === 'maxPlayers' && Number.isInteger(v) && v >= 2 && v <= 8 && v >= this.players.length) s.maxPlayers = v;
         else if (m.key === 'startingCash' && [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000].includes(v)) s.startingCash = v;
-        else if (m.key === 'maxHotels' && [1, 2, 3].includes(v)) s.maxHotels = v;
+        else if (m.key === 'maxHotels' && [1, 2, 3, 4, 5].includes(v)) s.maxHotels = v;
         else if (m.key === 'airportCap' && AIRPORT_CAPS.includes(v)) s.airportCap = v;
         else if (m.key === 'map' && MAPS[v]) {
           s.map = v;

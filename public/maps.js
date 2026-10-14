@@ -7,6 +7,7 @@
   const S = () => ({ type: 'surprise', name: 'Surprise' });
   const ET = () => ({ type: 'taxpct', name: 'Earnings Tax', pct: 10 });
   const PT = () => ({ type: 'tax', name: 'Premium Tax', amount: 75 });
+  const LUX = () => ({ ...PT(), amount: 250 });
   const RF = () => ({ type: 'refund', name: 'Tax Refund', amount: 50 });
   const START = () => ({ type: 'start', name: 'Start' });
   const PRISON = () => ({ type: 'prison', name: 'In Prison' });
@@ -74,9 +75,9 @@
         GTP(), C('Abu Dhabi', 300, 'ae'), A('DXB Airport'), C('Dubai', 320, 'ae'), S(), C('Los Angeles', 350, 'us'), A('LAX Airport'), T(), C('Miami', 360, 'us'), C('New York', 400, 'us'),
       ],
     },
-    // Six companies: dice-driven rent that scales up to 50x.
+    // Six companies: dice-driven rent that scales up to 100x.
     powergrid: {
-      name: 'Power Grid', icon: '🔌', blurb: 'Six companies, rent up to 50× the dice',
+      name: 'Power Grid', icon: '🔌', blurb: 'Six companies, rent up to 100× the dice',
       tiles: [
         START(), C('Bergen', 60, 'no'), POWER(), C('Oslo', 60, 'no'), ET(), A('OSL Airport'), C('Akureyri', 100, 'is'), T(), C('Reykjavik', 120, 'is'), U('Wind Farm', '🌬️'),
         PRISON(), C('Jeddah', 140, 'sa'), U('Oil Company', '🛢️'), C('Riyadh', 160, 'sa'), S(), A('RUH Airport'), C('Al Wakrah', 180, 'qa'), T(), C('Doha', 200, 'qa'), GAS(),
@@ -102,6 +103,36 @@
         PRISON(), C('Mykonos', 320, 'gr'), POWER(), C('Santorini', 340, 'gr'), T(), A('JTR Airport'), C('Ibiza', 380, 'es'), S(), C('Marbella', 400, 'es'), C('Mallorca', 420, 'es'),
         VAC(), C('Kowloon', 450, 'hk'), S(), C('Hong Kong', 480, 'hk'), A('HKG Airport'), C('Kyoto', 500, 'jp'), WATER(), C('Osaka', 520, 'jp'), T(), C('Tokyo', 550, 'jp'),
         GTP(), C('Las Vegas', 600, 'us'), C('Beverly Hills', 620, 'us'), T(), C('Manhattan', 650, 'us'), A('LAS Airport'), S(), C('Dubai', 700, 'ae'), PT(), C('Palm Island', 800, 'ae'),
+      ],
+    },
+    // Eight four-city countries: full sets are hard to finish and pay big. One side has no airport, another has two side by side.
+    grandtour: {
+      name: 'Grand Tour', icon: '🗺️', blurb: '48 tiles, every country has four cities',
+      tiles: [
+        START(), C('Fortaleza', 80, 'br'), C('Recife', 80, 'br'), T(), C('Salvador', 100, 'br'), C('Rio', 120, 'br'), A('GRU Airport'), C('Guadalajara', 140, 'mx'), C('Monterrey', 140, 'mx'), ET(), C('Cancun', 160, 'mx'), C('Mexico City', 180, 'mx'),
+        PRISON(), C('Kyoto', 200, 'jp'), C('Osaka', 200, 'jp'), S(), C('Yokohama', 220, 'jp'), C('Tokyo', 240, 'jp'), POWER(), C('Incheon', 260, 'kr'), C('Daegu', 260, 'kr'), T(), C('Busan', 280, 'kr'), C('Seoul', 300, 'kr'),
+        VAC(), C('Lyon', 320, 'fr'), C('Marseille', 320, 'fr'), C('Nice', 340, 'fr'), C('Paris', 360, 'fr'), A('CDG Airport'), A('LHR Airport'), C('Edinburgh', 380, 'gb'), C('Manchester', 380, 'gb'), S(), C('Liverpool', 400, 'gb'), C('London', 420, 'gb'),
+        GTP(), C('Perth', 440, 'au'), C('Brisbane', 450, 'au'), WATER(), C('Melbourne', 470, 'au'), C('Sydney', 500, 'au'), T(), C('Chicago', 520, 'us'), C('Los Angeles', 540, 'us'), PT(), C('San Francisco', 560, 'us'), C('New York', 600, 'us'),
+      ],
+    },
+    // Twelve airports in clusters of two and three. Airport rent tops out at the eight-airport level.
+    skyempire: {
+      name: 'Sky Empire', icon: '🛫', blurb: 'Twelve airports in clusters, small two-city countries',
+      tiles: [
+        START(), A('ATL Airport'), A('ORD Airport'), A('DFW Airport'), C('Varadero', 60, 'cu'), C('Havana', 80, 'cu'), T(), C('Cusco', 100, 'pe'), C('Lima', 120, 'pe'), ET(),
+        PRISON(), C('Mombasa', 140, 'ke'), C('Nairobi', 160, 'ke'), A('NBO Airport'), S(), A('DXB Airport'), A('DOH Airport'), C('Marrakesh', 180, 'ma'), C('Casablanca', 200, 'ma'), POWER(),
+        VAC(), A('HND Airport'), C('Hanoi', 220, 'vn'), C('Saigon', 240, 'vn'), T(), A('SIN Airport'), A('HKG Airport'), C('Bali', 260, 'id'), C('Jakarta', 280, 'id'), WATER(),
+        GTP(), C('Queenstown', 300, 'nz'), C('Auckland', 320, 'nz'), A('SYD Airport'), S(), C('Vancouver', 350, 'ca'), PT(), A('LAX Airport'), A('JFK Airport'), C('Toronto', 400, 'ca'),
+      ],
+    },
+    // Prices from $300 to $1200, a second Go to prison in the middle of the board, no Treasure cards and $250 Premium Tax.
+    billionaire: {
+      name: 'Billionaire Row', icon: '💰', blurb: 'Prices to $1200 and a second Go to prison; try $6000+ starting cash',
+      tiles: [
+        START(), C('St. Moritz', 300, 'ch'), C('Gstaad', 320, 'ch'), LUX(), C('Zurich', 340, 'ch'), S(), A('NCE Airport'), C('Saint-Tropez', 360, 'fr'), C('Cannes', 380, 'fr'), ET(), C('Courchevel', 400, 'fr'),
+        PRISON(), C('Porto Cervo', 420, 'it'), C('Portofino', 440, 'it'), LUX(), C('Capri', 460, 'it'), C('Lake Como', 480, 'it'), S(), C('Mayfair', 500, 'gb'), C('Chelsea', 520, 'gb'), ET(), C('Belgravia', 560, 'gb'),
+        VAC(), C('Jumeirah', 600, 'ae'), C('Saadiyat', 620, 'ae'), GTP(), C('Palm Island', 650, 'ae'), S(), C('Sentosa', 680, 'sg'), LUX(), C('Marina Bay', 700, 'sg'), C('Orchard', 720, 'sg'), C('Raffles', 750, 'sg'),
+        GTP(), A('LAS Airport'), C('Malibu', 800, 'us'), C('Aspen', 850, 'us'), U('Yacht Club', '🛥️'), C('Beverly Hills', 900, 'us'), C('Manhattan', 1000, 'us'), C('Kowloon', 1050, 'hk'), C('Repulse Bay', 1100, 'hk'), C('Central', 1150, 'hk'), C('The Peak', 1200, 'hk'),
       ],
     },
   };
@@ -150,6 +181,7 @@
     [300, [26, 130, 390, 900, 1100, 1275]], [320, [28, 150, 450, 1000, 1200, 1400]], [350, [35, 175, 500, 1100, 1300, 1500]],
     [400, [50, 200, 600, 1400, 1700, 2000]], [450, [60, 250, 700, 1550, 1850, 2200]], [500, [70, 300, 800, 1700, 2000, 2400]],
     [600, [90, 400, 1000, 2000, 2400, 2800]], [700, [110, 480, 1150, 2250, 2700, 3150]], [800, [130, 550, 1300, 2500, 3000, 3500]],
+    [1000, [170, 700, 1600, 3000, 3600, 4200]], [1200, [210, 850, 1900, 3500, 4200, 5000]],
   ];
   function rentTable(price) {
     let lo = ANCHORS[0], hi = ANCHORS[ANCHORS.length - 1];
@@ -162,18 +194,18 @@
       return i === 0 ? Math.round(x) : Math.round(x / 5) * 5;
     });
   }
-  // Rent at a building level: 0 = bare, 1-4 = houses, 5 = one hotel, 6 = two hotels (1.5x), 7 = three hotels (2x).
+  // Rent at a building level: 0 = bare, 1-4 = houses, 5 = one hotel, then each extra hotel adds 0.5x the hotel rent (up to five hotels = 3x).
   function rentAt(price, level) {
     const t = rentTable(price);
     return level <= 5 ? t[level] : Math.round((t[5] * (1 + 0.5 * (level - 5))) / 5) * 5;
   }
-  function houseCost(price) { return price < 130 ? 50 : price < 210 ? 100 : price < 290 ? 150 : price < 450 ? 200 : 300; }
+  function houseCost(price) { return price < 130 ? 50 : price < 210 ? 100 : price < 290 ? 150 : price < 450 ? 200 : price < 900 ? 300 : 400; }
   // Airport rent doubles with every airport the owner holds.
   const AIRPORT_RENT = [25, 50, 100, 200, 400, 800, 1600, 3200];
   // Alternative rule: rent starts at $25 and doubles with every paid landing, up to a cap the room chooses.
   const AIRPORT_CAPS = [200, 400, 800, 1600, 3200];
   const airportVisitRent = (visits, cap) => Math.min(cap || 3200, 25 * 2 ** visits);
-  const COMPANY_MULT = [4, 10, 20, 30, 40, 50];
+  const COMPANY_MULT = [4, 10, 20, 40, 70, 100];
 
   const api = { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
