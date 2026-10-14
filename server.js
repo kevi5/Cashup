@@ -26,6 +26,37 @@ const COLORS = [...BASE_COLORS, ...SKIN_COLORS];
 const BOT_A = ['Sneaky', 'Lucky', 'Greedy', 'Jolly', 'Witty', 'Bold', 'Thrifty', 'Fancy', 'Shady', 'Mighty', 'Clever', 'Dizzy'];
 const BOT_B = ['Baron', 'Tycoon', 'Banker', 'Mogul', 'Broker', 'Investor', 'Landlord', 'Dealer', 'Magnate', 'Trader', 'Duke', 'Fox'];
 const JAIL_FEE = 50;
+// Reactions a player can send over their token. Must match EMOTES in public/app.js.
+const EMOTES = ['😂', '😎', '🔥', '👏', '😭', '😡', '💸', '🤝'];
+
+// ---------- player stats ----------
+// Kept on disk across restarts, keyed by lower-cased player name. Every save writes the main file and a copy
+// outside the repo folder; loading falls back to the copy if the main file is missing or damaged.
+// STATS=/tmp/a.json,/tmp/b.json points tests elsewhere.
+const STATS_FILES = (process.env.STATS || [path.join(__dirname, 'data', 'stats.json'), path.join(__dirname, '..', 'cashup-stats-copy.json')].join(',')).split(',');
+const DEFAULT_PROFILES = ['vk', 'Tony Wayne'];
+function loadStats() {
+  for (const f of STATS_FILES) {
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* missing or damaged: try the next copy */ }
+  }
+  return {};
+}
+const STATS = loadStats();
+for (const name of DEFAULT_PROFILES) STATS[name.toLowerCase()] ||= { name, games: 0, wins: 0, best: 0, last: 0 };
+function saveStats() {
+  const data = JSON.stringify(STATS, null, 1);
+  for (const f of STATS_FILES) {
+    try {
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(`${f}.tmp`, data);
+      fs.renameSync(`${f}.tmp`, f);   // write-then-rename so a crash never leaves a half-written file
+    } catch (e) { console.error('Could not save stats to', f, e.message); }
+  }
+}
+saveStats();
+function statsList() {
+  return Object.values(STATS).sort((a, b) => b.wins - a.wins || b.games - a.games || a.name.localeCompare(b.name));
+}
 // A mortgage pays the sell value up front; if it is not lifted within this many of the owner's turns, the bank takes the property.
 const MORTGAGE_TURNS = 5;
 // Fast game: how long a player in debt has to sell something themselves before the game does it for them.
@@ -174,7 +205,7 @@ class Room {
   // ---------- state sync ----------
   state() {
     return {
-      seq: ++this.seq, ver: 5, build: BUILD,
+      seq: ++this.seq, ver: 7, build: BUILD, emote: this.emote || null,
       debt: this.debt ? { pid: this.debt.pid, endsIn: Math.max(0, this.debt.endsAt - Date.now()) } : null,
       code: this.code, hostId: this.hostId, phase: this.phase, settings: this.settings,
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
@@ -188,6 +219,7 @@ class Room {
       trades: this.trades,
       auction: this.auction && { ...this.auction, endsIn: Math.max(0, this.auction.endsAt - Date.now()) },
       card: this.card, move: this.move, winner: this.winner,
+      stats: this.phase === 'over' ? this.players.filter((p) => !p.bot).map((p) => STATS[p.name.toLowerCase()]).filter(Boolean) : null,
     };
   }
 
@@ -430,12 +462,19 @@ class Room {
   // Fast game: a player in debt has their least useful holdings sold to the bank until they are solvent.
   // Order: loose properties (blocked city sets first, then lowest current rent), then buildings (tallest first),
   // then properties of full sets (lowest rent first). Mortgaged properties are skipped: selling them pays nothing.
+  // With the mortgage rule on, properties are mortgaged instead of sold (same cash, and the player can lift it later).
   autoSell(p) {
     if (!p || p.bankrupt || p.money >= 0) return;
     const rentNow = (i) => this.rent(i, 7);
     const blocked = (i) => this.tiles[i].type === 'city' && this.setOf(i).some((j) => this.owned[j] && this.owned[j].owner !== p.id);
     const sold = [], trimmed = {};
-    const sellProp = (i) => { const amount = this.tiles[i].price / 2; delete this.owned[i]; p.money += amount; sold.push([i, amount]); };
+    const sellProp = (i) => {
+      const amount = this.tiles[i].price / 2;
+      if (this.settings.mortgage) Object.assign(this.owned[i], { mortgaged: true, mortgageTurns: MORTGAGE_TURNS });
+      else delete this.owned[i];
+      p.money += amount;
+      sold.push([i, amount]);
+    };
     for (let guard = 0; guard < 300 && p.money < 0; guard++) {
       const mine = this.propsOf(p);
       const loose = mine.filter((i) => !this.owned[i].mortgaged && !this.ownsSet(p.id, i));
@@ -456,7 +495,8 @@ class Room {
       sellProp(rest.sort((a, b) => rentNow(a) - rentNow(b) || this.tiles[a].price - this.tiles[b].price)[0]);
     }
     for (const [i, n] of Object.entries(trimmed)) this.say(this.P(p), ` sold ${n} building${n > 1 ? 's' : ''} on `, this.TL(+i), ' to cover a debt');
-    for (const [i, amount] of sold) this.say(this.P(p), ' sold ', this.TL(i), ` for $${amount} to cover a debt`);
+    const verb = this.settings.mortgage ? ' mortgaged ' : ' sold ';
+    for (const [i, amount] of sold) this.say(this.P(p), verb, this.TL(i), ` for $${amount} to cover a debt`);
   }
 
   // Fast game: spend what the player has on houses and hotels, lowest building first (highest price on ties),
@@ -637,10 +677,22 @@ class Room {
       this.auction = null;
       this.winner = left[0] ? left[0].id : null;
       if (left[0]) this.say(this.P(left[0]), ' won the game! 🏆');
+      this.recordStats();
       return this.broadcast();
     }
     if (wasTurn) return this.nextTurn();
     this.broadcast();
+  }
+
+  // Every person (not bot) still seated when the game ends gets a game; the last one standing gets the win.
+  recordStats() {
+    for (const p of this.players) {
+      if (p.bot) continue;
+      const k = p.name.toLowerCase(), r = STATS[k] ||= { name: p.name, games: 0, wins: 0, best: 0, last: 0 };
+      r.games++; r.last = Date.now();
+      if (p.id === this.winner) { r.wins++; r.best = Math.max(r.best, p.money); }
+    }
+    saveStats();
   }
 
   // ---------- property management ----------
@@ -732,13 +784,45 @@ class Room {
     }, (750 + rnd(500)) / SPEED);
   }
 
+  // How much a property matters to a player, as a multiple of its price. Blocking an opponent who holds the
+  // rest of a set ranks above completing the bot's own set: an opponent's full set is what loses games.
+  // `owner` maps a tile to its owner id, so a trade can be scored on the ownership it would leave behind.
+  stake(pid, i, owner = (j) => this.owned[j] && this.owned[j].owner) {
+    const others = this.setOf(i).filter((j) => j !== i).map(owner);
+    if (!others.length) return 1;
+    const rival = others.find((o) => o && o !== pid);
+    const onlyRival = rival && others.every((o) => !o || o === rival);
+    if (onlyRival && others.every((o) => o === rival)) return 2.5;          // blocks an opponent's set
+    if (others.every((o) => o === pid)) return 2;                            // completes our own set
+    if (onlyRival && others.filter((o) => o === rival).length * 2 >= others.length) return 1.5;   // an opponent is collecting it
+    if (others.every((o) => !o || o === pid) && others.includes(pid)) return 1.3;                  // we are collecting it
+    return 1;
+  }
+
+  // A bot's answer to a trade offered to it. It never hands an opponent a full set, whatever the price;
+  // otherwise each property is weighed by its stake, on both sides, and the bot wants a margin on top.
+  botWantsTrade(tr) {
+    if (!this.validTrade(tr)) return { ok: false };
+    const bot = tr.to, rival = tr.from;
+    const now = (j) => this.owned[j] && this.owned[j].owner;
+    const after = (j) => (tr.give.props.includes(j) ? bot : tr.get.props.includes(j) ? rival : now(j));
+    const completes = tr.get.props.some((i) => !this.setOf(i).every((j) => now(j) === rival) && this.setOf(i).every((j) => after(j) === rival));
+    if (completes) return { ok: false, why: 'it would complete their set' };
+    const price = (i) => this.tiles[i].price;
+    const gain = tr.give.money + tr.give.props.reduce((sum, i) => sum + price(i) * this.stake(bot, i, after), 0);
+    const cost = tr.get.money + tr.get.props.reduce((sum, i) => sum + price(i) * Math.max(this.stake(bot, i, now), this.stake(rival, i, after)), 0);
+    return { ok: gain >= cost * 1.15 };
+  }
+
   raiseFunds(p) {
     let guard = 200;
     while (p.money < 0 && guard-- > 0) {
       const mine = this.propsOf(p);
       const withHouse = mine.filter((i) => this.owned[i].houses > 0).sort((x, y) => this.owned[y].houses - this.owned[x].houses)[0];
       if (withHouse !== undefined) { this.owned[withHouse].houses--; p.money += houseCost(this.tiles[withHouse].price) / 2; continue; }
-      const free = mine.filter((i) => !this.owned[i].mortgaged).sort((x, y) => this.tiles[x].price - this.tiles[y].price)[0];
+      // give up the least strategic property first, so blocking tiles are the last to go
+      const worth = (i) => this.tiles[i].price * this.stake(p.id, i);
+      const free = mine.filter((i) => !this.owned[i].mortgaged).sort((x, y) => worth(x) - worth(y))[0];
       if (free === undefined) break;
       if (this.settings.mortgage) { this.owned[free].mortgaged = true; this.owned[free].mortgageTurns = MORTGAGE_TURNS; p.money += this.tiles[free].price / 2; this.say(this.P(p), ' mortgaged ', this.TL(free)); }
       else { delete this.owned[free]; p.money += this.tiles[free].price / 2; this.say(this.P(p), ' sold ', this.TL(free)); }
@@ -767,19 +851,23 @@ class Room {
   botTick() {
     if (this.phase !== 'playing') return;
     if (!this.players.some((p) => !p.bot && p.connected)) return; // nobody watching: pause
-    const value = (side) => side.money + side.props.reduce((s, i) => s + this.tiles[i].price, 0);
     const tr = this.trades.find((t) => this.byId(t.to) && this.byId(t.to).bot);
     if (tr) {
-      const bot = this.byId(tr.to);
-      if (this.validTrade(tr) && value(tr.give) >= value(tr.get) * 1.2) this.acceptTrade(tr);
-      else { this.trades = this.trades.filter((t) => t !== tr); this.say(this.P(bot), ' declined a trade from ', this.P(this.byId(tr.from))); }
+      const answer = this.botWantsTrade(tr);
+      if (answer.ok) this.acceptTrade(tr);
+      else {
+        this.trades = this.trades.filter((t) => t !== tr);
+        this.say(this.P(this.byId(tr.to)), ' declined a trade from ', this.P(this.byId(tr.from)), answer.why ? `: ${answer.why}` : '');
+      }
       return this.broadcast();
     }
     if (this.tp === 'auction' && this.auction) {
       const a = this.auction, price = this.tiles[a.tile].price;
       const bidders = this.active().filter((b) => b.bot && a.bidder !== b.id);
       for (const b of shuffle(bidders)) {
-        const limit = Math.min(price * 0.85, b.money - 120);
+        // bid higher for a tile that blocks an opponent's set or completes our own, and keep less cash back for it
+        const k = this.stake(b.id, a.tile);
+        const limit = Math.min(price * 0.85 * k, b.money - (k >= 2 ? 20 : 120));
         const add = a.bid + 100 <= limit * 0.6 ? 100 : 10;
         if (a.bid + add <= limit && this.bid(b, add)) return this.broadcast();
       }
@@ -797,8 +885,9 @@ class Room {
       return this.roll(p);
     }
     if (this.tp === 'buy') {
-      const t = this.tiles[p.pos];
-      if (p.money - t.price >= 60) return this.buy(p);
+      const t = this.tiles[p.pos], k = this.stake(p.id, p.pos);
+      // a blocking or set-completing tile is worth spending down to the last dollar
+      if (p.money - t.price >= (k >= 2 ? 0 : k > 1 ? 30 : 60)) return this.buy(p);
       return this.settings.auction ? this.startAuction(p) : this.finish(p);
     }
     if (this.tp === 'end') {
@@ -832,6 +921,13 @@ class Room {
         if (!COLORS.includes(m.color) || this.players.some((x) => x.color === m.color)) return this.err(client, 'That appearance is taken');
         p.color = m.color;
         return this.broadcast();
+      case 'emote': {
+        // a reaction that bursts over the player's token on every screen; at most one per player every 0.7s
+        if (!p || !EMOTES.includes(m.e) || Date.now() - (p.lastEmote || 0) < 700) return;
+        p.lastEmote = Date.now();
+        this.emote = { id: ++this.logId, pid: p.id, e: m.e };
+        return this.broadcast();
+      }
       case 'chat': {
         if (!p) return;
         const text = String(m.text || '').trim().slice(0, 200);
@@ -1029,6 +1125,10 @@ const server = http.createServer((req, res) => {
   if (p === '/api/create') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ code: newCode() }));
+  }
+  if (p === '/api/stats') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(statsList()));
   }
   if (p === '/api/sounds') {
     // Optional audio overrides: any <event>.mp3 dropped into public/sounds replaces the built-in synth cue.

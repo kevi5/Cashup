@@ -20,6 +20,7 @@ Inspired by [richup.io](https://richup.io/), with thanks to its creators. See [C
 - **3D dice** drawn by a small canvas renderer written for this project, hopping tokens, and a one-time celebration when a player completes a set
 - **60 appearances**, all original characters: animals (lion, fox, panda, shark, dragon…), characters (pirate, astronaut, wizard, vampire, knight…) and a few oddities (pumpkin, cactus, snowman, sun). They are defined in `public/skins.js`
 - **At-a-glance board**: current rent on every owned property, turns left on mortgages, the cash waiting on Vacation, and a highlight when you can afford to build
+- **Stats and profiles**: games played, won and lost, win rate and best winning cash per player, shown on the home page and on the end-of-game screen. Stats are kept by name (case does not matter), so pick a profile button (`vk` and `Tony Wayne` come built in) or type the same name each time. They are saved to `data/stats.json` with a copy in `../cashup-stats-copy.json` (outside the repo folder); if the main file is lost or damaged, the copy is loaded instead. Games against bots count; bots get no stats
 - **Chat**, a scrollable game log you can copy, sound cues with a volume slider, and seats that survive a page refresh
 - Works on desktop and scales down for narrow screens
 
@@ -34,7 +35,7 @@ The host sets these before the game starts, and can hand the host role to anothe
 | Starting cash | $3000 | $500 to $10,000 |
 | x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
-| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on but own something sellable, you get the normal buy prompt so you can sell and still buy it. A player in debt gets 10 seconds to sell something themselves, then their least useful holdings are sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties |
+| Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on but own something sellable, you get the normal buy prompt so you can sell and still buy it. A player in debt gets 10 seconds to sell something themselves, then their least useful holdings are sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties. With Mortgage on, those properties are mortgaged instead of sold |
 | Auction | Off | A property nobody buys goes to the highest bidder |
 | No rent while in prison | On | Owners in prison collect nothing |
 | Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |
@@ -79,6 +80,14 @@ cloudflared tunnel --url http://localhost:3000
 ```bash
 ngrok http 3000
 ```
+
+A quick tunnel gets a new address each time it starts, and the browser keeps names, sound settings and seats per address. To keep the same address, claim your free static domain on the ngrok dashboard (Domains page) and start the tunnel with it:
+
+```bash
+ngrok http 3000 --url=https://your-name.ngrok-free.dev
+```
+
+This copy is set up that way already: `npm run tunnel` serves the game at https://unelected-ludivina-aphyllous.ngrok-free.dev.
 
 Open the `https://…` address the tunnel prints, create a game there, and send your friends the room link from the "Share this game" box. Anyone with that link can join, so share it only with the people you want in the game.
 

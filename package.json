@@ -5,7 +5,8 @@
   "description": "Private, real-time property-trading board game for friends: Node + WebSocket server, no-build JavaScript client, eleven maps, bots, trades and 3D dice.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "tunnel": "ngrok http 3000 --url=https://unelected-ludivina-aphyllous.ngrok-free.dev"
   },
   "engines": {
     "node": ">=18"

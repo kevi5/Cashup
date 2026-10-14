@@ -90,6 +90,7 @@ const SYNTH = {
   warn() { pluck(740, 0, 0.12, 0.07); pluck(740, 0.2, 0.12, 0.07); pluck(622, 0.4, 0.3, 0.07); },
   error() { tone(220, 0, 0.12, 'triangle', 0.07); tone(175, 0.1, 0.2, 'triangle', 0.07); },
   click() { noise(0, 0.008, 0.05, 3600); tone(900, 0, 0.03, 'sine', 0.02); },
+  emote() { tone(600, 0, 0.12, 'sine', 0.05, 500); pluck(1568, 0.08, 0.25, 0.05); },
 };
 function sfx(name) {
   const v = volume();
@@ -180,11 +181,36 @@ const PIPS = { 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7,
 const faceHTML = (n) => Array.from({ length: 9 }, (_, i) => `<i class="${PIPS[n].includes(i + 1) ? 'on' : ''}"></i>`).join('');
 for (const c of document.querySelectorAll('.cube')) c.innerHTML = `<div class="face">${faceHTML(5)}</div>`;
 
+// Play a one-shot CSS animation class on an element, restarting it if it is already running.
+function flash(el, cls, ms) {
+  if (!el) return;
+  el.classList.remove(cls);
+  void el.offsetWidth;   // force a reflow so re-adding the class restarts the animation
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+
 function toast(msg) {
   const d = document.createElement('div');
   d.className = 'toast'; d.textContent = msg;
   $('#toasts').append(d);
   setTimeout(() => d.remove(), 3300);
+}
+
+// =====================================================================
+// Profiles & stats
+// =====================================================================
+// Saved profiles: the server's defaults plus everyone who has finished a game. Stats are keyed by name.
+let PROFILES = [];
+const loadProfiles = () => fetch('/api/stats').then((r) => r.json()).then((l) => { PROFILES = l; return l; }).catch(() => PROFILES);
+const profileChips = (cur) => PROFILES.map((r) => `<button class="pchip${r.name.toLowerCase() === cur.trim().toLowerCase() ? ' sel' : ''}" data-act="profile" data-name="${esc(r.name)}">${esc(r.name)}</button>`).join('');
+function markChips(box, cur) {
+  for (const c of box.querySelectorAll('.pchip')) c.classList.toggle('sel', c.dataset.name.toLowerCase() === cur.trim().toLowerCase());
+}
+function statsTable(list, hi = '') {
+  const row = (r) => `<tr${r.name.toLowerCase() === hi.trim().toLowerCase() ? ' class="me"' : ''}><td>${esc(r.name)}</td><td>${r.games}</td><td>${r.wins}</td><td>${r.games - r.wins}</td>`
+    + `<td>${r.games ? Math.round((100 * r.wins) / r.games) : 0}%</td><td>${r.best ? `$${r.best}` : '–'}</td></tr>`;
+  return `<table class="stats"><tr><th>Player</th><th>Played</th><th>Won</th><th>Lost</th><th>Win %</th><th>Best win</th></tr>${list.map(row).join('')}</table>`;
 }
 
 // =====================================================================
@@ -194,7 +220,12 @@ function initHome() {
   $('#home').hidden = false;
   const name = $('#homeName');
   name.value = store.get('name') || '';
-  name.addEventListener('input', () => store.set('name', name.value.trim()));
+  name.addEventListener('input', () => { store.set('name', name.value.trim()); markChips($('#homeProfiles'), name.value); });
+  loadProfiles().then((l) => {
+    $('#homeProfiles').innerHTML = profileChips(name.value);
+    $('#statsTable').innerHTML = statsTable(l, name.value);
+    $('#homeStats').hidden = !l.length;
+  });
   const join = () => {
     const m = $('#homeCode').value.trim().toLowerCase().match(/([a-z0-9]{4,8})\/?$/);
     if (!m) return toast('Enter a room code or paste the room link');
@@ -206,6 +237,7 @@ function initHome() {
     if (!b) return;
     if (b.dataset.act === 'mute') toggleMute();
     if (b.dataset.act === 'joinCode') join();
+    if (b.dataset.act === 'profile') { name.value = b.dataset.name; store.set('name', name.value); markChips($('#homeProfiles'), name.value); }
     if (b.dataset.act === 'create') {
       b.disabled = true;
       try { const { code } = await (await fetch('/api/create')).json(); location.href = `/room/${code}`; }
@@ -364,6 +396,24 @@ function currentRent(i) {
   return t.type === 'airport' ? money(AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1]) : `${COMPANY_MULT[Math.min(n, COMPANY_MULT.length) - 1]}× dice`;
 }
 
+// The owner's colour bar on a tile: buildings and current rent, or a lock and the turns left to lift a mortgage.
+function ownerBarHTML(o, rent) {
+  if (o.mortgaged) {
+    const turns = o.mortgageTurns ? `<span class="rent" title="Turns left to lift the mortgage">${o.mortgageTurns}</span>` : '';
+    return `<span class="rl"><span class="bld">🔒</span>${turns}</span>`;
+  }
+  const b = buildings(o.houses);
+  return `<span class="rl">${b ? `<span class="bld">${b}</span>` : ''}<span class="rent">${rent}</span></span>`;
+}
+// Which animation a property tile plays when its ownership changes from `a` to `b` (either may be missing).
+function tileChangeFx(a, b) {
+  if (!a) return 'justbought';                       // the bar pops in
+  if (!b) return 'released';                         // back to the bank: the tile flickers and dims
+  if (b.mortgaged && !a.mortgaged) return 'stamp';   // the lock is stamped on
+  if (b.houses > a.houses) return 'built';           // the building drops onto the bar
+  return 'bump';                                     // new owner, sold building or new rent: the bar bumps
+}
+
 function renderBoard() {
   if (boardMap !== mapKey()) buildBoard();
   const turnPlayer = S.phase === 'playing' ? pl(S.turn) : null;
@@ -376,27 +426,18 @@ function renderBoard() {
       if (cache[`tile${i}`] !== key) {
         const was = cache[`tile${i}`];
         cache[`tile${i}`] = key;
-        if (prevS && was !== undefined && key) {
-          // newly owned: the bar pops in; more buildings or a new owner: it bumps
-          const cls = was === '' ? 'justbought' : 'bump';
-          el.classList.remove('justbought', 'bump'); void el.offsetWidth; el.classList.add(cls);
-          setTimeout(() => el.classList.remove(cls), 700);
-        }
+        if (prevS && was !== undefined) flash(el, tileChangeFx(prevS.owned[i], o), 900);
         el.classList.toggle('owned', !!owner);
         el.classList.toggle('mortgaged', !!(o && o.mortgaged));
-        const pe = el.querySelector('.price');
-        if (owner) {
-          el.style.setProperty('--owner', owner.color);
-          const b = buildings(o.houses);
-          pe.innerHTML = `<span class="rl">${o.mortgaged ? `<span class="bld">🔒</span>${o.mortgageTurns ? `<span class="rent" title="Turns left to lift the mortgage">${o.mortgageTurns}</span>` : ''}` : `${b ? `<span class="bld">${b}</span>` : ''}<span class="rent">${rent}</span>`}</span>`;
-        } else pe.innerHTML = money(t.price);
+        if (owner) el.style.setProperty('--owner', owner.color);
+        el.querySelector('.price').innerHTML = owner ? ownerBarHTML(o, rent) : money(t.price);
       }
     }
     if (t.type === 'vacation') {
       // With vacation cash on, show what is waiting in the pot.
       const pot = el.querySelector('.pot'), show = !!S.settings.vacationCash, txt = show ? String(S.pot) : '';
       if (pot && cache.pot !== txt) {
-        if (cache.pot !== undefined && show) { pot.classList.remove('bump'); void pot.offsetWidth; pot.classList.add('bump'); }
+        if (cache.pot !== undefined && show) flash(pot, 'bump', 600);
         cache.pot = txt;
         pot.hidden = !show;
         pot.innerHTML = show ? `💰 ${money(S.pot)}` : '';
@@ -417,7 +458,14 @@ function placeToken(el, x, y, side) {
 
 function layoutTokens() {
   const shown = S.players.filter((p) => !p.bankrupt);
-  for (const id of Object.keys(tokEls)) if (!shown.some((p) => p.id === id)) { tokEls[id].remove(); delete tokEls[id]; }
+  // A token leaving the board (bankrupt or removed) spins away before it is taken off.
+  for (const id of Object.keys(tokEls)) {
+    if (shown.some((p) => p.id === id)) continue;
+    const el = tokEls[id];
+    delete tokEls[id];
+    el.classList.add('gone');
+    setTimeout(() => el.remove(), 700);
+  }
   const groups = {};
   for (const p of shown) (groups[`${p.pos}|${p.inJail}`] = groups[`${p.pos}|${p.inJail}`] || []).push(p);
   const ts = G.T / 64.7, now = performance.now();
@@ -464,6 +512,23 @@ function floatText(i, text, color) {
   $('#board').append(el);
   setTimeout(() => el.remove(), 1500);
 }
+// A few coins arc from one tile to another (rent changing hands).
+function coinFly(from, to) {
+  if (!G || !TILES[from] || !TILES[to] || from === to || document.hidden) return;
+  const [x1, y1] = tileCenter(from), [x2, y2] = tileCenter(to);
+  for (let k = 0; k < 5; k++) {
+    const c = document.createElement('div');
+    c.className = 'coin';
+    c.style.left = `${x1}px`; c.style.top = `${y1}px`;
+    $('#board').append(c);
+    const lift = -60 - k * 8;   // arc height
+    c.animate([
+      { transform: 'translate(-50%, -50%) scale(.4)', opacity: 0 },
+      { transform: `translate(calc(-50% + ${(x2 - x1) / 2}px), calc(-50% + ${(y2 - y1) / 2 + lift}px)) scale(1.1)`, opacity: 1, offset: 0.5 },
+      { transform: `translate(calc(-50% + ${x2 - x1}px), calc(-50% + ${y2 - y1}px)) scale(.6)`, opacity: 0 },
+    ], { duration: 700, delay: k * 70, easing: 'ease-in-out', fill: 'both' }).onfinish = () => c.remove();
+  }
+}
 // Count a player's balance up or down to its new value with a brief colour flash.
 function tweenMoney(el, from, to) {
   if (!el || document.hidden) return;
@@ -487,7 +552,11 @@ function logFx(e) {
   let m;
   if ((m = txt.match(/^ (?:passed|landed on) Start and received \$(\d+)/))) { floatText(0, `+$${m[1]}`, '#65e052'); sfx('coin'); }
   else if ((m = txt.match(/^ paid \$(\d+) (?:Earnings|Premium) Tax/))) { floatText(at, `-$${m[1]}`, '#ff6b5e'); sfx('tax'); }
-  else if ((m = txt.match(/^ paid \$(\d+) to $/))) floatText(at, `-$${m[1]}`, '#ff6b5e');
+  else if ((m = txt.match(/^ paid \$(\d+) to $/))) {
+    floatText(at, `-$${m[1]}`, '#ff6b5e');
+    const payee = e.parts[2] && pl(e.parts[2].p);
+    if (payee && at !== null) coinFly(at, payee.pos);
+  }
   else if ((m = txt.match(/^ received a \$(\d+) /))) { floatText(at, `+$${m[1]}`, '#65e052'); sfx('coin'); }
   else if ((m = txt.match(/^ went on vacation and collected \$(\d+)/))) { floatText(at, `+$${m[1]}`, '#65e052'); sfx('vacation'); }
   else if (/^ went on vacation/.test(txt)) sfx('vacation');
@@ -505,8 +574,7 @@ function animateMove(mv) {
     el.classList.add('slide');
     setTimeout(() => el.classList.remove('slide'), 700);
     sfx('jail');
-    const cell = tileEls[mv.to];
-    if (cell) { cell.classList.remove('rattle'); void cell.offsetWidth; cell.classList.add('rattle'); setTimeout(() => cell.classList.remove('rattle'), 900); }
+    flash(tileEls[mv.to], 'rattle', 900);
     return;
   }
   const dir = mv.mode === 'back' ? -1 : 1;
@@ -528,8 +596,7 @@ function animateMove(mv) {
           layoutTokens();
           // touchdown: a squash on the token and a ring spreading from the tile, in the player's colour
           const who = pl(mv.pid);
-          el.classList.remove('landed'); void el.offsetWidth; el.classList.add('landed');
-          setTimeout(() => el.classList.remove('landed'), 450);
+          flash(el, 'landed', 450);
           if (who) ripple(mv.to, who.color);
           sfx('land');
         }, mv.ms);
@@ -583,7 +650,7 @@ function centerHTML() {
   // Fast game gives a short window to sell by hand before the game sells for you; the bar shows the time left.
   const grace = S.debt && S.debt.pid === myId;
   const debt = m.money < 0 ? (grace
-    ? `<div class="hint">You are in debt. Sell something yourself in the next few seconds, or the game sells your least useful properties for you.<div class="au-bar debtbar"><i style="animation-duration:${S.debt.endsIn}ms"></i></div></div>`
+    ? `<div class="hint">You are in debt. Sell something yourself in the next few seconds, or the game ${S.settings.mortgage ? 'mortgages' : 'sells'} your least useful properties for you.<div class="au-bar debtbar"><i style="animation-duration:${S.debt.endsIn}ms"></i></div></div>`
     : '<div class="hint">You are in debt. Sell or mortgage properties, or declare bankruptcy.</div>') : '';
   if (S.tp === 'roll') {
     let h = '';
@@ -641,8 +708,14 @@ function renderPlayers() {
     const row = box.querySelector(`[data-pid="${p.id}"]`);
     row.className = `prow${p.id === myId ? ' me' : ''}${S.turn === p.id ? ' turn' : ''}${p.bankrupt ? ' out' : ''}${p.connected ? '' : ' off'}`;
     row.style.setProperty('--pc', p.color);
-    const tags = `${p.bot ? `<span class="tag" title="Bot">${I.bot}</span>` : ''}${p.id === S.hostId ? `<span class="tag host">${I.crown}${lobby ? ' Host' : ''}</span>` : ''}`
-      + `${p.inJail ? `<span class="tag" title="In prison">${I.lock}</span>` : ''}${p.skip ? '<span class="tag" title="On vacation: skips the next turn">🏝️</span>' : ''}${p.pardons ? `<span class="tag" title="Pardon card">${I.ticket}</span>` : ''}${!p.connected && !p.bot ? '<span class="tag">offline</span>' : ''}`;
+    const tags = [
+      p.bot && `<span class="tag" title="Bot">${I.bot}</span>`,
+      p.id === S.hostId && `<span class="tag host">${I.crown}${lobby ? ' Host' : ''}</span>`,
+      p.inJail && `<span class="tag" title="In prison">${I.lock}</span>`,
+      p.skip && '<span class="tag" title="On vacation: skips the next turn">🏝️</span>',
+      p.pardons && `<span class="tag" title="Pardon card">${I.ticket}</span>`,
+      !p.connected && !p.bot && '<span class="tag">offline</span>',
+    ].filter(Boolean).join('');
     let html = `<div class="ptok">${tokenSVG(p.color)}</div><div class="pname"><span>${esc(p.name)}</span>${tags}`;
     if (lobby && p.id === myId) html += `<br><button class="appearance" data-act="pick">${I.palette} Change appearance</button>`;
     html += '</div>';
@@ -678,7 +751,7 @@ function settingsHTML() {
     <h3>Gameplay rules</h3>
     ${tog('doubleRent', '🪙', 'x2 rent on full-set properties', 'If a player owns a full property set, the base rent payment will be doubled')}
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
-    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on, you can sell something and still buy it. If you run out of cash you get 10 seconds to sell something yourself, then your least useful properties are sold automatically') : ''}
+    ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on, you can sell something and still buy it. If you run out of cash you get 10 seconds to sell something yourself, then your least useful properties are sold automatically (mortgaged instead when Mortgage is on)') : ''}
     ${'vacationSkip' in s ? tog('vacationSkip', '⏭️', 'Vacation skips a turn', 'A player who lands on Vacation misses their next turn') : ''}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
@@ -716,14 +789,44 @@ function gameSideHTML() {
   h += `<div class="panel trades"><div class="thead"><div class="ptitle">Trades</div>${alive ? `<button class="btn sm" data-act="tradeNew">${I.plus} Create</button>` : ''}</div>${trades}</div>`;
   if (m) {
     const mine = TILES.filter((t) => S.owned[t.i] && S.owned[t.i].owner === myId);
-    h += `<div class="panel myprops"><div class="ptitle">My properties (${mine.length})</div>${mine.map((t) => {
+    const rows = mine.map((t) => {
       const o = S.owned[t.i];
-      return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}${canBuild(t.i) ? `<span class="canb" title="You can build here">${I.up}</span>` : ''}<span class="h">${o.mortgaged ? `🔒${o.mortgageTurns || ''}` : buildings(o.houses)}</span><span class="rent">${currentRent(t.i)}</span></button>`;
-    }).join('') || '<div class="empty">Nothing yet</div>'}${mine.length ? sellRow(mine) : ''}</div>`;
+      const build = canBuild(t.i) ? `<span class="canb" title="You can build here">${I.up}</span>` : '';
+      const state = o.mortgaged ? `🔒${o.mortgageTurns || ''}` : buildings(o.houses);
+      return `<button class="prop${o.mortgaged ? ' mort' : ''}" data-act="prop" data-tile="${t.i}">${propIcon(t)} ${esc(t.name)}${build}`
+        + `<span class="h">${state}</span><span class="rent">${currentRent(t.i)}</span></button>`;
+    }).join('') || '<div class="empty">Nothing yet</div>';
+    h += `<div class="panel myprops"><div class="ptitle">My properties (${mine.length})</div>${rows}${mine.length ? sellRow(mine) : ''}</div>`;
   }
   return h;
 }
 function renderSide() { setHTML($('#side'), 'side', S.phase === 'lobby' ? settingsHTML() : gameSideHTML()); }
+
+// Reactions a player can send over their token. Must match EMOTES in server.js.
+const EMOTES = ['😂', '😎', '🔥', '👏', '😭', '😡', '💸', '🤝'];
+// A reaction bursts up from the player's token (or their row in the list once they are off the board) with a spray of small copies.
+function emoteBurst({ pid, e }) {
+  const host = tokEls[pid] || $(`#players [data-pid="${pid}"]`);
+  if (!host || document.hidden) return;
+  const add = (cls, style) => {
+    const d = document.createElement('div');
+    d.className = cls; d.textContent = e;
+    if (style) d.style.cssText = style;
+    host.append(d);
+    setTimeout(() => d.remove(), 1700);
+  };
+  add('emote');
+  for (let k = 0; k < 6; k++) {
+    const ang = Math.random() * Math.PI * 2, dist = 30 + Math.random() * 30;
+    add('emote mini', `--x:${Math.round(Math.cos(ang) * dist)}px;--y:${Math.round(Math.sin(ang) * dist - 20)}px;--r:${rnd(120) - 60}deg`);
+  }
+  sfx('emote');
+}
+function renderEmoteBar() {
+  const bar = $('#emoteBar'), show = !!me() && S.ver >= 6;
+  bar.hidden = !show;
+  if (show && !bar.firstChild) bar.innerHTML = EMOTES.map((e) => `<button data-act="emote" data-e="${e}" title="Send ${e}">${e}</button>`).join('');
+}
 
 function renderChat() {
   const list = $('#chatList');
@@ -755,18 +858,17 @@ function renderOverlay() {
         const open = offer.filter((k) => !taken.includes(k.color));
         selColor = me() && offer.some((k) => k.color === me().color) ? me().color : (open[rnd(open.length)] || {}).color;
       }
-      key = `pick|${taken.join()}|${selColor}|${pickMode}|${offer.length}`;
-      html = (me() ? '' : `<input class="field" id="joinName" maxlength="16" placeholder="Your name" value="${esc(pendingName)}">`)
+      key = `pick|${taken.join()}|${selColor}|${pickMode}|${offer.length}|${PROFILES.length}`;
+      html = (me() ? '' : `<div class="profiles" id="joinProfiles">${profileChips(pendingName)}</div><input class="field" id="joinName" maxlength="16" placeholder="Your name" value="${esc(pendingName)}">`)
         + `<div>Select your player appearance: <b>${SKIN[selColor] ? esc(SKIN[selColor].name) : ''}</b></div>`
         + `<div class="skins" id="skinGrid">${offer.map((k) => `<button style="--c:${k.color}" class="skin ${k.color === selColor ? 'sel' : ''}" data-act="color" data-c="${k.color}" title="${k.name}" ${taken.includes(k.color) ? 'disabled' : ''}>${tokenSVG(k.color)}<span>${k.name}</span></button>`).join('')}</div>`
         + `<button class="btn" data-act="${me() ? 'savePick' : 'join'}">${me() ? 'Save' : 'Join game'} ${I.arrow}</button>`;
     }
   } else if (S.phase === 'over') {
-    const w = pl(S.winner);
-    key = `over|${S.winner}|${myId === S.hostId}`;
-    const conf = Array.from({ length: 46 }, () => `<i class="confetti" style="left:${rnd(100)}%;background:${COLORS[rnd(12)]};animation-duration:${2.4 + Math.random() * 2.6}s;animation-delay:${-Math.random() * 5}s"></i>`).join('');
-    html = `${conf}<div class="winner">${w ? `<div class="wtok" style="margin:auto">${tokenSVG(w.color)}</div><h2>🏆 ${esc(w.name)} won the game!</h2>` : '<h2>Game over</h2>'}</div>`
-      + (myId === S.hostId ? `<button class="btn" data-act="lobby">${I.back} Back to lobby</button>` : '<div>Waiting for the host to start a new game…</div>');
+    key = `over|${S.winner}|${myId === S.hostId}|${S.stats ? S.stats.length : 0}`;
+    html = gameOverHTML()
+      + (S.stats && S.stats.length ? statsTable(S.stats, me() ? me().name : '') : '')
+      + (myId === S.hostId ? `<button class="btn" data-act="lobby">${I.back} Back to lobby</button>` : '<div class="wait">Waiting for the host to start a new game…</div>');
   }
   ov.hidden = !key;
   if (key && cache.overlay !== key) {
@@ -774,12 +876,36 @@ function renderOverlay() {
     cache.overlay = key; ov.innerHTML = html;
     if ($('#skinGrid')) $('#skinGrid').scrollTop = scrolled;
     const inp = $('#joinName');
-    if (inp) inp.addEventListener('input', () => { pendingName = inp.value; });
+    if (inp) inp.addEventListener('input', () => { pendingName = inp.value; markChips($('#joinProfiles'), inp.value); });
   }
   if (!key && cache.overlay) { cache.overlay = ''; ov.innerHTML = ''; }
 }
 
-function popNear(el, i, w, h) {
+// Winner (and spectators): rays, a confetti burst, falling confetti and coins, the token spinning in under a crown.
+// Anyone else who played: grey rain, their own token knocked over, the title letters thudding down.
+function gameOverHTML() {
+  const w = pl(S.winner), m = me(), lost = m && (!w || w.id !== m.id);
+  const letters = (t) => [...t].map((c, i) => `<span style="--i:${i}">${c === ' ' ? '&nbsp;' : esc(c)}</span>`).join('');
+  const many = (n, f) => Array.from({ length: n }, f).join('');
+  if (lost) {
+    const rain = many(40, () => `<i class="rain" style="left:${rnd(100)}%;animation-duration:${0.7 + Math.random() * 0.5}s;animation-delay:${-Math.random() * 2}s"></i>`);
+    return `<div class="go lose">${rain}<div class="mytok">${tokenSVG(m.color)}<b class="dizzy">💫</b></div>`
+      + `<h2 class="gotitle">${letters('GAME OVER')}</h2>`
+      + `<div class="gosub">${w ? `<span class="minitok">${tokenSVG(w.color)}</span>${esc(w.name)} won with $${w.money}` : 'Nobody is left standing'}</div></div>`;
+  }
+  if (!w) return '<div class="go"><h2 class="gotitle">GAME OVER</h2></div>';
+  const fall = many(44, () => `<i class="confetti" style="left:${rnd(100)}%;background:${COLORS[rnd(12)]};animation-duration:${2.4 + Math.random() * 2.6}s;animation-delay:${-Math.random() * 5}s"></i>`);
+  const coins = many(14, () => `<i class="coin" style="left:${rnd(100)}%;animation-duration:${1.8 + Math.random() * 1.6}s;animation-delay:${0.6 + Math.random() * 3}s">$</i>`);
+  const burst = many(36, () => {
+    const a = Math.random() * Math.PI * 2, d = 120 + Math.random() * 220;
+    return `<i class="spark" style="background:${COLORS[rnd(12)]};--x:${Math.round(Math.cos(a) * d)}px;--y:${Math.round(Math.sin(a) * d)}px;animation-delay:${0.25 + Math.random() * 0.15}s"></i>`;
+  });
+  return `<div class="go win">${fall}${coins}<div class="stage"><div class="rays"></div>${burst}<div class="wtok">${tokenSVG(w.color)}</div><b class="crown">👑</b></div>`
+    + `<h2 class="gotitle">${letters(m ? 'YOU WIN!' : `${w.name} wins!`)}</h2>`
+    + `<div class="gosub">Last one standing with <b>$${w.money}</b></div></div>`;
+}
+
+function popNear(i, w, h) {
   const [x, y] = tileCenter(i), c = BOARD / 2, m = G.C + 10;
   const dx = c - x, dy = c - y, len = Math.hypot(dx, dy) || 1;
   const px = x + (dx / len) * (w / 2 + G.T * 0.6), py = y + (dy / len) * (h / 2 + G.T * 0.6);
@@ -793,13 +919,22 @@ function renderCard() {
   const first = !prevS;
   shownCard = S.card.id;
   if (first) return;
-  const [x, y] = popNear(el, S.card.tile, 170, 90);
+  const [x, y] = popNear(S.card.tile, 170, 90);
   el.style.left = `${x}px`; el.style.top = `${y}px`;
   el.innerHTML = `<button class="x" data-act="closeCard">×</button>${esc(S.card.text)}`;
-  el.hidden = true; void el.offsetWidth; el.hidden = false;
+  el.classList.remove('out');
+  el.hidden = true; void el.offsetWidth; el.hidden = false;   // re-show so the entrance animation replays
   sfx('card');
   clearTimeout(cardTimer);
-  cardTimer = setTimeout(() => { el.hidden = true; }, 6000);
+  cardTimer = setTimeout(() => hideCard(el), 6000);
+}
+
+// The card shrinks and fades before it hides.
+function hideCard(el) {
+  if (el.hidden) return;
+  clearTimeout(cardTimer);
+  el.classList.add('out');
+  cardTimer = setTimeout(() => { el.classList.remove('out'); el.hidden = true; }, 250);
 }
 
 // True when you could buy a house or hotel on this property right now (mirrors the server's checks).
@@ -834,27 +969,39 @@ function propHTML(i) {
         t.type === 'airport' ? `$${AIRPORT_RENT[k]}` : `${COMPANY_MULT[k]}× dice`, n === k + 1 && !o.mortgaged)).join('');
     }
   }
-  let btns = '';
-  if (owner && m && owner.id === myId && S.turn === myId && S.phase === 'playing') {
-    const hc = t.type === 'city' ? houseCost(t.price) : 0;
-    btns = '<div class="pc-btns">'
-      + (t.type === 'city' ? `<button class="btn ${canBuild(i) ? 'go' : 'soft'}" data-act="mg" data-kind="build" data-tile="${i}" title="${canBuild(i) ? `Build a ${o.houses >= 4 ? 'hotel' : 'house'} for $${hc}` : `Build ($${hc}): needs the full set, enough cash${S.settings.evenBuild ? ', and even building' : ''}`}" ${canBuild(i) ? '' : 'disabled'}>${I.up}</button><button class="btn soft" data-act="mg" data-kind="sellHouse" data-tile="${i}" title="Sell a building (+$${hc / 2})" ${o.houses ? '' : 'disabled'}>${I.down}</button>` : '')
-      + (S.settings.mortgage ? (o.mortgaged
-        ? `<button class="btn soft" data-act="mg" data-kind="unmortgage" data-tile="${i}" title="Lift mortgage ($${Math.round(t.price * 0.55)})">${I.unlock}</button>`
-        : `<button class="btn soft" data-act="mg" data-kind="mortgage" data-tile="${i}" title="Mortgage for the sell value (+$${t.price / 2}). Lift it within 5 of your turns or the bank takes the property">${I.bank}</button>`) : '')
-      + `<span class="sp"></span><button class="btn" data-act="mg" data-kind="sellProp" data-tile="${i}" title="Sell to the bank (+$${o.mortgaged ? 0 : t.price / 2})">${I.trash}</button></div>`;
-  }
+  const btns = owner && m && owner.id === myId && S.turn === myId && S.phase === 'playing' ? propButtons(i) : '';
   return `<button class="x" data-act="closeProp">×</button><h4>${esc(t.name)}</h4>`
     + `<table class="rt"><tr><th><span>when</span></th><th><span>get</span></th></tr>${rows}</table>${btns}`
     + `<div class="pc-owner">${owner ? `Owner &nbsp; ${dot(owner)} <b>${esc(owner.name)}</b>${o.mortgaged ? ` · mortgaged${o.mortgageTurns ? `, ${o.mortgageTurns} turn${o.mortgageTurns === 1 ? '' : 's'} left` : ''}` : ''}` : 'Not owned yet'}</div>`
     + `<div class="pc-foot"><div><small>Price</small>$ ${t.price}</div>${t.type === 'city' ? `<div><small>🏠</small>$ ${houseCost(t.price)}</div><div><small>🏨</small>$ ${houseCost(t.price)}</div>` : ''}</div>`;
+}
+// The owner's buttons on a property card: build, sell a building, mortgage or lift it, sell to the bank.
+function propButtons(i) {
+  const t = TILES[i], o = S.owned[i];
+  const btn = (cls, kind, title, icon, enabled = true) =>
+    `<button class="btn ${cls}" data-act="mg" data-kind="${kind}" data-tile="${i}" title="${title}" ${enabled ? '' : 'disabled'}>${icon}</button>`;
+  let h = '';
+  if (t.type === 'city') {
+    const hc = houseCost(t.price), ok = canBuild(i);
+    const buildTitle = ok ? `Build a ${o.houses >= 4 ? 'hotel' : 'house'} for $${hc}`
+      : `Build ($${hc}): needs the full set, enough cash${S.settings.evenBuild ? ', and even building' : ''}`;
+    h += btn(ok ? 'go' : 'soft', 'build', buildTitle, I.up, ok);
+    h += btn('soft', 'sellHouse', `Sell a building (+$${hc / 2})`, I.down, o.houses > 0);
+  }
+  if (S.settings.mortgage) {
+    h += o.mortgaged
+      ? btn('soft', 'unmortgage', `Lift mortgage ($${Math.round(t.price * 0.55)})`, I.unlock)
+      : btn('soft', 'mortgage', `Mortgage for the sell value (+$${t.price / 2}). Lift it within 5 of your turns or the bank takes the property`, I.bank);
+  }
+  h += `<span class="sp"></span>${btn('', 'sellProp', `Sell to the bank (+$${o.mortgaged ? 0 : t.price / 2})`, I.trash)}`;
+  return `<div class="pc-btns">${h}</div>`;
 }
 function renderProp() {
   const el = $('#propPop');
   if (openProp === null || !TILES[openProp] || !TILES[openProp].price) { el.hidden = true; cache.prop = ''; return; }
   if (setHTML(el, 'prop', propHTML(openProp)) || el.hidden) {
     el.hidden = false;
-    const h = el.offsetHeight, [x, y] = popNear(el, openProp, 226, h);
+    const h = el.offsetHeight, [x, y] = popNear(openProp, 226, h);
     el.style.left = `${x - 113}px`; el.style.top = `${y - h / 2}px`;
   }
 }
@@ -937,11 +1084,8 @@ function setOwners(st) {
 }
 function celebrateSet(p, tiles) {
   for (const i of tiles) {
-    const el = tileEls[i];
-    if (!el) continue;
-    el.style.setProperty('--sc', p.color);
-    el.classList.remove('setfx'); void el.offsetWidth; el.classList.add('setfx');
-    setTimeout(() => el.classList.remove('setfx'), 2400);
+    if (tileEls[i]) tileEls[i].style.setProperty('--sc', p.color);
+    flash(tileEls[i], 'setfx', 2400);
   }
   const first = TILES[tiles[0]];
   const what = first.type === 'city' ? tiles.map((i) => esc(TILES[i].name)).join(' · ') : first.type === 'airport' ? 'every airport' : 'every company';
@@ -970,11 +1114,8 @@ function breakerOf(prev, now, i) {
 function showBreak({ breaker, victim, tile, others }) {
   if (!breaker || !victim) return;
   const fx = (i, cls, color, ms) => {
-    const el = tileEls[i];
-    if (!el) return;
-    el.style.setProperty('--sc', color);
-    el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
-    setTimeout(() => el.classList.remove(cls), ms);
+    if (tileEls[i]) tileEls[i].style.setProperty('--sc', color);
+    flash(tileEls[i], cls, ms);
   };
   fx(tile, 'breakhit', breaker.color, 2000);
   for (const i of others) fx(i, 'breakfx', victim.color, 1400);
@@ -1005,11 +1146,13 @@ function render() {
   renderPlayers();
   renderSide();
   renderChat();
+  renderEmoteBar();
   renderOverlay();
   renderCard();
   renderProp();
   if (modal && modal.type !== 'tradeEdit') { cache.modal = null; renderModal(); }
   if (first) return;
+  if (S.emote && (!prevS.emote || prevS.emote.id !== S.emote.id)) emoteBurst(S.emote);
   // sound cues for state transitions
   if (prevS.phase === 'lobby' && S.phase === 'playing') sfx('start');
   if (prevS.phase === 'playing' && S.phase === 'over') sfx(S.winner === myId ? 'win' : 'bankrupt');
@@ -1067,6 +1210,7 @@ const ACT = {
     setTimeout(() => { b.innerHTML = `${I.copy} Copy`; }, 1500);
   },
   color(b) { selColor = b.dataset.c; renderOverlay(); },
+  profile(b) { pendingName = $('#joinName').value = b.dataset.name; markChips($('#joinProfiles'), pendingName); },
   join() {
     const name = (pendingName || store.get('name') || '').trim() || `Player${10 + rnd(90)}`;
     store.set('name', name);
@@ -1092,6 +1236,7 @@ const ACT = {
   maps() { modal = { type: 'maps' }; renderModal(); },
   useMap(b) { wsSend({ type: 'setting', key: 'map', value: b.dataset.map }); if (b.dataset.map !== 'generated' || S.settings.map !== 'generated') modal = null; renderModal(); },
   roll() { wsSend({ type: 'roll' }); },
+  emote(b) { wsSend({ type: 'emote', e: b.dataset.e }); },
   buy() { wsSend({ type: 'buy' }); },
   skip() { wsSend({ type: 'skip' }); },
   endTurn() { wsSend({ type: 'endTurn' }); },
@@ -1101,7 +1246,7 @@ const ACT = {
   mg(b) { wsSend({ type: b.dataset.kind, tile: +b.dataset.tile }); },
   prop(b) { openProp = +b.dataset.tile; cache.prop = ''; $('#propPop').hidden = true; renderProp(); },
   closeProp() { openProp = null; renderProp(); },
-  closeCard() { $('#cardPop').hidden = true; },
+  closeCard() { hideCard($('#cardPop')); },
   closeModal() { modal = null; renderModal(); },
   confirmYes() { const run = modal.run; modal = null; renderModal(); run(); },
   sellAll(b) {
@@ -1134,6 +1279,7 @@ const ACT = {
 function initRoom() {
   $('#room').hidden = false;
   pendingName = store.get('name') || '';
+  loadProfiles().then(() => S && renderOverlay());
   Dice.init($('#diceCanvas'));
   fit();
   addEventListener('resize', fit);
