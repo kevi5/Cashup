@@ -1,5 +1,5 @@
 'use strict';
-/* global SKINS, INK, MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, Dice */
+/* global SKINS, INK, MAPS, rentTable, rentAt, houseCost, builtCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, Dice */
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -383,10 +383,15 @@ function airportVisits(o) {
   const owner = pl(o.owner);
   return S.settings.airportShared ? (owner && owner.av) || 0 : o.visits || 0;
 }
+// In a team game every property a team owns shows in the team's colour, matching its 🔵🔴🟢🟡 tag.
+const TEAM_COLOR = { 1: '#3b82f6', 2: '#ef4444', 3: '#22c55e', 4: '#eab308' };
+const ownerColor = (p) => (S.settings.teams && TEAM_COLOR[p.team]) || p.color;
+// In a team game teammates share sets, so set checks compare teams instead of owners.
+const side = (id) => (S.settings.teams && S.settings.teamSets && pl(id) ? `team${pl(id).team}` : id);
 function currentRent(i) {
   const t = TILES[i], o = S.owned[i];
   if (o.mortgaged) return '';
-  const mine = (x) => S.owned[x.i] && S.owned[x.i].owner === o.owner;
+  const mine = (x) => S.owned[x.i] && side(S.owned[x.i].owner) === side(o.owner);
   if (t.type === 'city') {
     const table = rentTable(t.price);
     if (o.houses) return money(rentAt(t.price, o.houses));
@@ -424,14 +429,14 @@ function renderBoard() {
     if (t.price) {
       const o = S.owned[i], owner = o && pl(o.owner);
       const rent = owner ? currentRent(i) : '';
-      const key = owner ? `${owner.color}|${o.houses}|${o.mortgaged}|${o.mortgageTurns}|${rent}` : '';
+      const key = owner ? `${ownerColor(owner)}|${o.houses}|${o.mortgaged}|${o.mortgageTurns}|${rent}` : '';
       if (cache[`tile${i}`] !== key) {
         const was = cache[`tile${i}`];
         cache[`tile${i}`] = key;
         if (prevS && was !== undefined) flash(el, tileChangeFx(prevS.owned[i], o), 900);
         el.classList.toggle('owned', !!owner);
         el.classList.toggle('mortgaged', !!(o && o.mortgaged));
-        if (owner) el.style.setProperty('--owner', owner.color);
+        if (owner) el.style.setProperty('--owner', ownerColor(owner));
         el.querySelector('.price').innerHTML = owner ? ownerBarHTML(o, rent) : money(t.price);
       }
     }
@@ -741,11 +746,15 @@ function renderPlayers() {
     for (const k of Object.keys(cache)) if (k.startsWith('row')) delete cache[k];
   }
   const lobby = S.phase === 'lobby', host = myId === S.hostId;
+  const TEAM = { 1: '🔵 Team 1', 2: '🔴 Team 2', 3: '🟢 Team 3', 4: '🟡 Team 4' };
   for (const p of S.players) {
     const row = box.querySelector(`[data-pid="${p.id}"]`);
     row.className = `prow${p.id === myId ? ' me' : ''}${S.turn === p.id ? ' turn' : ''}${p.bankrupt ? ' out' : ''}${p.connected ? '' : ' off'}`;
     row.style.setProperty('--pc', p.color);
     const tags = [
+      S.settings.teams && p.team && (lobby && (host || p.id === myId)
+        ? `<button class="tag team" data-act="team" data-id="${p.id}" data-team="${p.team % S.settings.teams + 1}" title="Switch team">${TEAM[p.team]}</button>`
+        : lobby ? `<span class="tag team">${TEAM[p.team]}</span>` : `<span class="tag team" title="Team ${p.team}">${[...TEAM[p.team]][0]}</span>`),
       p.bot && `<span class="tag" title="Bot">${I.bot}</span>`,
       p.id === S.hostId && `<span class="tag host">${I.crown}${lobby ? ' Host' : ''}</span>`,
       p.inJail && `<span class="tag" title="In prison">${I.lock}</span>`,
@@ -790,6 +799,9 @@ function settingsHTML() {
     ${tog('doubleRent', '🪙', 'x2 rent on full-set properties', 'If a player owns a full property set, the base rent payment will be doubled')}
     ${tog('vacationCash', '🏝️', 'Vacation cash', 'If a player lands on Vacation, all collected money from taxes and bank payments will be earned')}
     ${'fastGame' in s ? tog('fastGame', '⚡', 'Fast game', 'Every property you land on is bought automatically if you can afford it, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on, you can sell something and still buy it. If you run out of cash you get 10 seconds to sell something yourself, then your least useful properties are sold automatically (mortgaged instead when Mortgage is on)') : ''}
+    ${'teamSets' in s ? `<div class="srow"><span class="ico">🤝</span><div><b>Team game</b><small>Play in teams. Click the team next to your name in the player list to switch (the host can move anyone). The game ends when only one team has players left</small></div>${sel('teams', [0, 2, 3, 4], (o) => (o ? `${o} teams` : 'Off'))}</div>
+    ${tog('teamNoRent', '', 'Teammates pay no rent', 'Landing on a teammate\'s property costs nothing').replace('class="srow"', `class="srow sub${s.teams ? '' : ' off'}"`)}
+    ${tog('teamSets', '', 'Teammates share sets', 'Properties held by teammates count together: a set split between them is a full set for each of them (double rent, building), and airports and companies count together').replace('class="srow"', `class="srow sub${s.teams ? '' : ' off'}"`)}` : ''}
     ${'vacationSkip' in s ? tog('vacationSkip', '⏭️', 'Vacation skips a turn', 'A player who lands on Vacation misses their next turn') : ''}
     ${tog('auction', '🔨', 'Auction', 'If someone skips purchasing a property, it will be sold to the highest bidder')}
     ${tog('noRentInPrison', '⛓️', "Don't collect rent while in prison", 'Rent will not be collected when landing on properties whose owners are in prison')}
@@ -807,7 +819,7 @@ function settingsHTML() {
 }
 
 // What the bank pays for a property and everything built on it (matches the server).
-const sellValue = (t) => { const o = S.owned[t.i]; return (o.houses * houseCost(t.price)) / 2 + (o.mortgaged ? 0 : t.price / 2); };
+const sellValue = (t) => { const o = S.owned[t.i]; return builtCost(t.price, o.houses) / 2 + (o.mortgaged ? 0 : t.price / 2); };
 function sellRow(mine) {
   const total = mine.reduce((sum, t) => sum + sellValue(t), 0);
   const can = S.phase === 'playing' && S.turn === myId && S.tp !== 'busy';
@@ -818,7 +830,15 @@ function sellRow(mine) {
 function gameSideHTML() {
   const m = me(), alive = m && !m.bankrupt && S.phase === 'playing';
   let h = '';
-  if (alive) h += `<div class="siderow"><button class="btn red sm" data-act="bankrupt">${I.flag} Bankrupt</button></div>`;
+  if (alive) h += `<div class="siderow">${S.ver >= 9 && !S.tie ? '<button class="btn sm" data-act="tieOffer" title="Ask the other players to end the game as a tie">🤝 Tie</button> ' : ''}<button class="btn red sm" data-act="bankrupt">${I.flag} Bankrupt</button></div>`;
+  if (alive && S.tie) {
+    const from = pl(S.tie.from), wait = S.players.filter((p) => !p.bankrupt && !p.bot && !S.tie.yes.includes(p.id));
+    const btns = S.tie.yes.includes(myId)
+      ? `<button class="btn sm red" data-act="tieDecline">${I.x} ${S.tie.from === myId ? 'Withdraw' : 'Decline'}</button>`
+      : `<button class="btn sm red" data-act="tieDecline">${I.x} Decline</button><button class="btn sm" data-act="tieAccept">${I.check} Accept</button>`;
+    h += `<div class="panel trades"><div class="ptitle">🤝 ${from ? esc(from.name) : 'Someone'} proposed a tie</div>`
+      + `<div class="empty">Waiting for ${wait.map((p) => esc(p.name)).join(', ')}</div><div class="siderow">${btns}</div></div>`;
+  }
   const trades = S.trades.map((t) => {
     const a = pl(t.from), b = pl(t.to);
     if (!a || !b) return '';
@@ -923,15 +943,16 @@ function renderOverlay() {
 // Winner (and spectators): rays, a confetti burst, falling confetti and coins, the token spinning in under a crown.
 // Anyone else who played: grey rain, their own token knocked over, the title letters thudding down.
 function gameOverHTML() {
-  const w = pl(S.winner), m = me(), lost = m && (!w || w.id !== m.id);
+  const w = pl(S.winner), m = me(), lost = m && !S.tie && (S.winTeam ? m.team !== S.winTeam : !w || w.id !== m.id);
   const letters = (t) => [...t].map((c, i) => `<span style="--i:${i}">${c === ' ' ? '&nbsp;' : esc(c)}</span>`).join('');
   const many = (n, f) => Array.from({ length: n }, f).join('');
   if (lost) {
     const rain = many(40, () => `<i class="rain" style="left:${rnd(100)}%;animation-duration:${0.7 + Math.random() * 0.5}s;animation-delay:${-Math.random() * 2}s"></i>`);
     return `<div class="go lose">${rain}<div class="mytok">${tokenSVG(m.color)}<b class="dizzy">💫</b></div>`
       + `<h2 class="gotitle">${letters('GAME OVER')}</h2>`
-      + `<div class="gosub">${w ? `<span class="minitok">${tokenSVG(w.color)}</span>${esc(w.name)} won with $${w.money}` : 'Nobody is left standing'}</div></div>`;
+      + `<div class="gosub">${S.winTeam ? `Team ${S.winTeam} won` : w ? `<span class="minitok">${tokenSVG(w.color)}</span>${esc(w.name)} won with $${w.money}` : 'Nobody is left standing'}</div></div>`;
   }
+  if (S.tie) return `<div class="go"><h2 class="gotitle">${letters("IT'S A TIE")}</h2><div class="gosub">Everyone agreed to a tie 🤝</div></div>`;
   if (!w) return '<div class="go"><h2 class="gotitle">GAME OVER</h2></div>';
   const fall = many(44, () => `<i class="confetti" style="left:${rnd(100)}%;background:${COLORS[rnd(12)]};animation-duration:${2.4 + Math.random() * 2.6}s;animation-delay:${-Math.random() * 5}s"></i>`);
   const coins = many(14, () => `<i class="gocoin" style="left:${rnd(100)}%;animation-duration:${1.8 + Math.random() * 1.6}s;animation-delay:${0.6 + Math.random() * 3}s">$</i>`);
@@ -940,8 +961,8 @@ function gameOverHTML() {
     return `<i class="spark" style="background:${COLORS[rnd(12)]};--x:${Math.round(Math.cos(a) * d)}px;--y:${Math.round(Math.sin(a) * d)}px;animation-delay:${0.25 + Math.random() * 0.15}s"></i>`;
   });
   return `<div class="go win">${fall}${coins}<div class="stage"><div class="rays"></div>${burst}<div class="wtok">${tokenSVG(w.color)}</div><b class="crown">👑</b></div>`
-    + `<h2 class="gotitle">${letters(m ? 'YOU WIN!' : `${w.name} wins!`)}</h2>`
-    + `<div class="gosub">Last one standing with <b>$${w.money}</b></div></div>`;
+    + `<h2 class="gotitle">${letters(S.winTeam ? (m ? 'YOUR TEAM WINS!' : `TEAM ${S.winTeam} WINS!`) : m ? 'YOU WIN!' : `${w.name} wins!`)}</h2>`
+    + `<div class="gosub">${S.winTeam ? `Last team standing. ${esc(w.name)} has <b>$${w.money}</b>` : `Last one standing with <b>$${w.money}</b>`}</div></div>`;
 }
 
 function popNear(i, w, h) {
@@ -981,10 +1002,10 @@ function canBuild(i) {
   const t = TILES[i], o = S.owned[i], m = me();
   if (!m || !o || o.owner !== myId || t.type !== 'city' || S.phase !== 'playing' || S.turn !== myId || S.tp === 'busy') return false;
   const set = TILES.filter((x) => x.type === 'city' && x.cc === t.cc);
-  if (!set.every((x) => S.owned[x.i] && S.owned[x.i].owner === myId && !S.owned[x.i].mortgaged)) return false;
+  if (!set.every((x) => S.owned[x.i] && side(S.owned[x.i].owner) === side(myId) && !S.owned[x.i].mortgaged)) return false;
   if (o.houses >= maxLevel()) return false;
   if (S.settings.evenBuild && o.houses > Math.min(...set.map((x) => S.owned[x.i].houses))) return false;
-  return m.money >= houseCost(t.price);
+  return m.money >= houseCost(t.price, o.houses + 1);
 }
 
 function propHTML(i) {
@@ -996,7 +1017,7 @@ function propHTML(i) {
     rows = labels.slice(0, maxLevel() + 1).map((label, k) => row(label, `$${rentAt(t.price, k)}`, o && !o.mortgaged && o.houses === k)).join('');
   } else {
     const set = TILES.filter((x) => x.type === t.type);
-    const n = owner ? set.filter((x) => S.owned[x.i] && S.owned[x.i].owner === owner.id).length : 0;
+    const n = owner ? set.filter((x) => S.owned[x.i] && side(S.owned[x.i].owner) === side(owner.id)).length : 0;
     const word = t.type === 'airport' ? 'airport' : 'company';
     if (t.type === 'airport' && S.settings.airportRepeat) {
       const visits = airportVisits(o), cap = S.settings.airportCap || 3200, nth = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
@@ -1012,7 +1033,7 @@ function propHTML(i) {
   return `<button class="x" data-act="closeProp">×</button><h4>${esc(t.name)}</h4>`
     + `<table class="rt"><tr><th><span>when</span></th><th><span>get</span></th></tr>${rows}</table>${btns}`
     + `<div class="pc-owner">${owner ? `Owner &nbsp; ${dot(owner)} <b>${esc(owner.name)}</b>${o.mortgaged ? ` · mortgaged${o.mortgageTurns ? `, ${o.mortgageTurns} turn${o.mortgageTurns === 1 ? '' : 's'} left` : ''}` : ''}` : 'Not owned yet'}</div>`
-    + `<div class="pc-foot"><div><small>Price</small>$ ${t.price}</div>${t.type === 'city' ? `<div><small>🏠</small>$ ${houseCost(t.price)}</div><div><small>🏨</small>$ ${houseCost(t.price)}</div>` : ''}</div>`;
+    + `<div class="pc-foot"><div><small>Price</small>$ ${t.price}</div>${t.type === 'city' ? `<div><small>🏠</small>$ ${houseCost(t.price)}</div><div${S.settings.maxHotels > 1 ? ' title="The 2nd hotel costs 2×, the 3rd 3×, and so on"' : ''}><small>🏨</small>$ ${houseCost(t.price, 5)}</div>` : ''}</div>`;
 }
 // The owner's buttons on a property card: build, sell a building, mortgage or lift it, sell to the bank.
 function propButtons(i) {
@@ -1021,11 +1042,11 @@ function propButtons(i) {
     `<button class="btn ${cls}" data-act="mg" data-kind="${kind}" data-tile="${i}" title="${title}" ${enabled ? '' : 'disabled'}>${icon}</button>`;
   let h = '';
   if (t.type === 'city') {
-    const hc = houseCost(t.price), ok = canBuild(i);
+    const hc = houseCost(t.price, o.houses + 1), ok = canBuild(i);
     const buildTitle = ok ? `Build a ${o.houses >= 4 ? 'hotel' : 'house'} for $${hc}`
       : `Build ($${hc}): needs the full set, enough cash${S.settings.evenBuild ? ', and even building' : ''}`;
     h += btn(ok ? 'go' : 'soft', 'build', buildTitle, I.up, ok);
-    h += btn('soft', 'sellHouse', `Sell a building (+$${hc / 2})`, I.down, o.houses > 0);
+    h += btn('soft', 'sellHouse', `Sell a building (+$${houseCost(t.price, o.houses) / 2})`, I.down, o.houses > 0);
   }
   if (S.settings.mortgage) {
     h += o.mortgaged
@@ -1198,7 +1219,7 @@ function render() {
   if (S.emote && (!prevS.emote || prevS.emote.id !== S.emote.id)) emoteBurst(S.emote);
   // sound cues for state transitions
   if (prevS.phase === 'lobby' && S.phase === 'playing') sfx('start');
-  if (prevS.phase === 'playing' && S.phase === 'over') sfx(S.winner === myId ? 'win' : 'bankrupt');
+  if (prevS.phase === 'playing' && S.phase === 'over') sfx(S.winner === myId || S.tie || (S.winTeam && me() && me().team === S.winTeam) ? 'win' : 'bankrupt');
   if (S.phase === 'playing' && S.turn === myId && S.tp === 'roll' && (prevS.turn !== myId || prevS.phase !== 'playing')) {
     sfx('turn');
     const slot = $('#timerSlot');
@@ -1214,7 +1235,7 @@ function render() {
       else if (a && b && b.houses > a.houses) sfx(b.houses >= 5 ? 'hotel' : 'build');
       else if (a && b && a.mortgaged !== b.mortgaged) sfx(b.mortgaged ? 'mortgage' : 'unmortgage');
     }
-    if (S.trades.length !== prevS.trades.length) sfx('trade');
+    if (S.trades.length !== prevS.trades.length || (S.tie && !prevS.tie)) sfx('trade');
     if (S.again && S.tp === 'roll' && !(prevS.again && prevS.tp === 'roll')) sfx('doubles');
     if (S.debt && S.debt.pid === myId && !(prevS.debt && prevS.debt.pid === myId)) sfx('warn');
     if (S.mapId === prevS.mapId && S.mapSeed === prevS.mapSeed) {
@@ -1275,6 +1296,7 @@ const ACT = {
     modal = { type: 'confirm', title: 'Hand over host?', text: `${p.name} will control the room settings, start games and remove players. You will become a regular player.`, yes: 'Make host', run: () => wsSend({ type: 'passHost', id: p.id }) };
     renderModal();
   },
+  team(b) { wsSend({ type: 'team', id: b.dataset.id, team: +b.dataset.team }); },
   set(b) { wsSend({ type: 'setting', key: b.dataset.key, value: !!b.dataset.val }); },
   maps() { modal = { type: 'maps' }; renderModal(); },
   useMap(b) { wsSend({ type: 'setting', key: 'map', value: b.dataset.map }); if (b.dataset.map !== 'generated' || S.settings.map !== 'generated') modal = null; renderModal(); },
@@ -1316,6 +1338,12 @@ const ACT = {
   tradeView(b) { modal = { type: 'tradeView', id: b.dataset.id }; cache.modal = null; renderModal(); },
   tradeAccept(b) { wsSend({ type: 'tradeAccept', id: b.dataset.id }); modal = null; renderModal(); },
   tradeDecline(b) { wsSend({ type: 'tradeDecline', id: b.dataset.id }); modal = null; renderModal(); },
+  tieOffer() {
+    modal = { type: 'confirm', title: 'Propose a tie?', text: 'Every other player still in the game must accept. If they all do, the game ends with no winner.', yes: 'Propose', run: () => wsSend({ type: 'tieOffer' }) };
+    renderModal();
+  },
+  tieAccept() { wsSend({ type: 'tieAccept' }); },
+  tieDecline() { wsSend({ type: 'tieDecline' }); },
   tradeCancel(b) { wsSend({ type: 'tradeCancel', id: b.dataset.id }); modal = null; renderModal(); },
 };
 

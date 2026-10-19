@@ -17,7 +17,8 @@ Inspired by [richup.io](https://richup.io/), with thanks to its creators. See [C
   - Speed Run (28 tiles, quick games), Jet Set (eight airports), Power Grid (six companies), Tax Haven (taxes and refunds everywhere), High Roller (prices up to $800)
   - For experienced players: Grand Tour (48 tiles, every country has four cities), Sky Empire (twelve airports in clusters), Billionaire Row (prices up to $1200, a second Go to prison mid-board, $250 Premium Tax; best with $6000+ starting cash)
   - **Random** plays one of the above, chosen when the game starts; **Generated** deals a brand-new shuffled board each time you pick it
-- **Full property game**: rent tables, houses and hotels, full-set bonuses, mortgages, auctions, trades between players, prison, Treasure and Surprise cards, taxes, a vacation cash pot, bankruptcy and a winner screen
+- **Full property game**: rent tables, houses and hotels, full-set bonuses, mortgages, auctions, trades between players, prison, Treasure and Surprise cards, taxes, a vacation cash pot, bankruptcy and a winner screen, or a tie when every player agrees to one
+- **Bots** that buy, build, bid and trade: they weigh a trade by price, set strategy and the rent a property brings (airport landing counters included), never hand an opponent a full set, and offer a person twice the price for the last city of a set they are collecting
 - **Cards with choices**: besides the classics, Surprise and Treasure cards can send you to any city you pick on the board, to the city charging the highest rent right now (houses, hotels and unbought cities count), or pay you per property you own or from the richest player
 - **Big-money moments**: paying $500+ rent jolts the board with a stamped OUCH!, and collecting $500+ from rent or the Vacation pot sets off a gold coin fountain
 - **3D dice** drawn by a small canvas renderer written for this project, thrown differently every roll (results come from the system's cryptographic random source), hopping tokens, and a one-time celebration when a player completes a set
@@ -39,12 +40,15 @@ The host sets these before the game starts, and can hand the host role to anothe
 | x2 rent on full sets | On | Base rent doubles when one player owns a whole set |
 | Vacation cash | On | Taxes and bank payments collect on Vacation for whoever lands there |
 | Fast game | Off | Properties are bought automatically when you land on them and can afford them, and houses and hotels are built automatically as soon as you can pay for them. If you cannot afford a property you land on but own something sellable, you get the normal buy prompt so you can sell and still buy it. A player in debt gets 10 seconds to sell something themselves, then their least useful holdings are sold automatically: loose properties first (blocked sets, then lowest rent), then buildings, then full-set properties. With Mortgage on, those properties are mortgaged instead of sold |
+| Team game | Off | 2, 3 or 4 teams; click the team next to your name in the lobby to switch (the host can move anyone, bots included). At least two teams need players. Each team's properties show in its team colour on the board. A bot covers a teammate's debt from its spare cash and hands a teammate the last city of a set they hold the rest of, and it accepts any trade a teammate offers. The last team with a player left wins: every person on it gets the win in the stats |
+| Teammates pay no rent | On | Landing on a teammate's property costs nothing |
+| Teammates share sets | On | Properties held by teammates count together: a set split between them is a full set for each (double rent, building on their own cities), and airports and companies count together |
 | Auction | Off | A property nobody buys goes to the highest bidder |
 | No rent while in prison | On | Owners in prison collect nothing |
 | Vacation skips a turn | On | Landing on Vacation ends your turn there (even on doubles) and you miss your next one |
 | Move after paying out of prison | Off | When off, paying or using a pardon card ends your turn and you move on the next one. Rolling doubles always gets you out and moving, with no extra roll |
 | Mortgage | Off | Mortgage for the sell value (50%); lift it within 5 of your turns or the bank takes the property |
-| Hotels per property | 1 | Up to 5. Each extra hotel adds half the hotel rent: two pay 1.5×, three 2×, four 2.5×, five 3× |
+| Hotels per property | 1 | Up to 5. Each extra hotel adds half the hotel rent: two pay 1.5×, three 2×, four 2.5×, five 3×. Each hotel costs more to build than the last: the 2nd costs 2× the 1st, the 3rd 3×, and so on (selling refunds half of what that hotel cost) |
 | Airport rent grows per landing | Off | Off: rent doubles with each airport the owner holds. On: rent starts at $25 and doubles with every paid landing |
 | Airport rent maximum | $3200 | Where the per-landing rent stops growing: $200, $400, $800, $1600 or $3200 |
 | Shared between airports | On | A landing on any of an owner's airports raises the rent at all of them. Off: each airport counts its own landings |
@@ -132,6 +136,7 @@ Only add audio you have the rights to use.
   node test/sim.js classic 60
   ```
 
+- Team games: `TEAMS=2` (or 3, 4) before `node test/sim.js` turns on teams, fails the run if anyone pays rent to a teammate, and reports how often teammates skipped rent, built on a shared set and got help from bots. `TEAMRENT=0` turns teammate rent back on, so that run must fail.
 - Fast full games: start a second server with every delay shortened, then point the script at it. The script's arguments are the map, seconds to play, auction on (1) or off (0), the port, and the stall timeout in milliseconds:
 
   ```bash

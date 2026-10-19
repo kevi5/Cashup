@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 const assert = require('assert');
-const { rentTable, airportVisitRent } = require('../public/maps.js');
+const { rentTable, airportVisitRent, houseCost, AIRPORT_RENT } = require('../public/maps.js');
 
 const file = path.join(__dirname, '..', 'server.js');
 const src = fs.readFileSync(file, 'utf8').replace(/^server\.listen\(.*$/m, 'module.exports = { Room };');
@@ -156,6 +156,152 @@ const check = (cond, msg) => { assert.ok(cond, msg); checks++; };
   check(human.money === 150, 'perProp pays per property');
   r.applyCard(human, { fx: ['fromRichest', 100] });
   check(human.money === 250 && bot.money === 800, 'the richest other player pays');
+}
+{ // team game: lobby teams, no rent between teammates, last team standing wins
+  const { r, human, bot, other, A } = setup();
+  const as = (p, m) => r.handle({ player: p, ws: {} }, m);
+  as(human, { type: 'setting', key: 'teams', value: 2 });
+  check(human.team === 1 && bot.team === 2 && other.team === 1, 'new players join the smaller team');
+  as(bot, { type: 'team', id: human.id, team: 2 });
+  check(human.team === 1, 'only the host moves someone else');
+  as(human, { type: 'team', id: human.id, team: 3 });
+  check(human.team === 1, 'no team 3 in a two-team game');
+  as(human, { type: 'team', id: other.id, team: 2 });
+  as(human, { type: 'team', id: human.id, team: 2 });
+  as(human, { type: 'start' });
+  check(r.phase === 'lobby', 'cannot start with everyone on one team');
+  as(human, { type: 'team', id: human.id, team: 1 });
+  r.settings.randomOrder = false;
+  as(human, { type: 'start' });
+  check(r.phase === 'playing', 'starts with two teams in use');
+  r.after = (ms, fn) => fn();
+  own(r, A[0], human);
+  for (const [p, team, paid] of [[bot, 'teammate', false], [other, 'opponent', true]]) {   // human and bot vs other
+    if (p === bot) bot.team = 1;
+    const before = p.money; p.pos = A[0]; r.turnIdx = r.players.indexOf(p); r.land(p);
+    check((p.money < before) === paid, `${team} ${paid ? 'pays' : 'pays no'} rent`);
+  }
+  r.settings.teamNoRent = false;
+  const before = bot.money; bot.pos = A[0]; r.turnIdx = r.players.indexOf(bot); r.land(bot);
+  check(bot.money < before, 'teammates pay rent when that option is off');
+  r.bankrupt(human);
+  check(r.phase === 'playing', 'the game goes on while both teams have players');
+  r.bankrupt(other);
+  check(r.phase === 'over' && r.winTeam === 1 && r.winner === bot.id, 'last team standing wins');
+}
+{ // three teams: count change moves players, the game runs until one team is left
+  const { r, human, bot, other } = setup();
+  const fourth = r.addPlayer('Fourth', null, true);
+  const as = (p, m) => r.handle({ player: p, ws: {} }, m);
+  as(human, { type: 'setting', key: 'teams', value: 3 });
+  as(human, { type: 'team', id: human.id, team: 3 });
+  check(human.team === 3, 'team 3 exists in a three-team game');
+  as(human, { type: 'setting', key: 'teams', value: 2 });
+  check(r.players.every((p) => p.team <= 2), 'shrinking the team count moves players off removed teams');
+  as(human, { type: 'setting', key: 'teams', value: 3 });
+  [human.team, bot.team, other.team, fourth.team] = [1, 2, 3, 3];
+  r.settings.randomOrder = false;
+  as(human, { type: 'start' });
+  r.after = (ms, fn) => fn();
+  r.bankrupt(human);
+  check(r.phase === 'playing', 'two teams left: the game goes on');
+  r.bankrupt(bot);
+  check(r.phase === 'over' && r.winTeam === 3, 'team 3 wins when it is the last one left');
+}
+{ // teammates share sets: a set split between them is full for each, and the rent doubles
+  const { r, human, bot, other, A } = setup();
+  r.settings.teams = 2; [human.team, bot.team, other.team] = [1, 1, 2];
+  own(r, A[0], human); own(r, A[1], human); own(r, A[2], bot);
+  const base = rentTable(r.tiles[A[0]].price)[0];
+  check(r.ownsSet(human.id, A[0]) && r.ownsSet(bot.id, A[2]) && !r.ownsSet(other.id, A[0]), 'a split team set counts as full');
+  check(r.rent(A[0], 7) === base * 2, 'full-set rent doubles on a team set');
+  r.phase = 'playing'; r.turnIdx = r.players.indexOf(bot); r.tp = 'roll'; bot.money = 10000;
+  r.handle({ player: bot, ws: {} }, { type: 'build', tile: A[2] });
+  check(r.owned[A[2]].houses === 1, 'a teammate builds on their own city of the shared set');
+  r.handle({ player: bot, ws: {} }, { type: 'build', tile: A[0] });
+  check(r.owned[A[0]].houses === 0, "a teammate cannot build on the other's city");
+  r.owned[A[2]].houses = 0;
+  check(r.stake(other.id, A[0]) === 2.5, 'a bot sees a team set as one to block');
+  const four = r.addPlayer('Four', null, true); four.team = 2;
+  own(r, A[0], other); own(r, A[1], four);   // team 2 holds two thirds, the bot (team 1) the last
+  other.money = 100000;
+  const ans = r.botWantsTrade(trade(other, bot, { money: 50000 }, { props: [A[2]] }));
+  check(!ans.ok && /complete/.test(ans.why), 'a bot will not complete an opposing team set');
+  r.settings.teamSets = false;
+  own(r, A[0], human); own(r, A[1], human);
+  check(!r.ownsSet(human.id, A[0]) && r.rent(A[0], 7) === base, 'no sharing when that option is off');
+  r.settings.teamSets = true; r.settings.teams = 0;
+  check(!r.ownsSet(human.id, A[0]), 'no sharing outside a team game');
+}
+{ // airports count together for a team
+  const { r, human, bot, other } = setup();
+  r.settings.teams = 2; [human.team, bot.team, other.team] = [1, 1, 2];
+  const ports = r.tiles.filter((t) => t.type === 'airport').map((t) => t.i);
+  own(r, ports[0], human); own(r, ports[1], bot);
+  check(r.rent(ports[0], 7) === AIRPORT_RENT[1], 'two airports across a team charge the two-airport rent');
+}
+{ // a bot builds as much as it can afford in one turn
+  const { r, bot, A } = setup();
+  for (const i of A) own(r, i, bot);
+  bot.money = 100000;
+  r.botBuild(bot);
+  check(A.every((i) => r.owned[i].houses === 4 + r.settings.maxHotels), 'bot builds every set to the top');
+}
+{ // the nth hotel costs n times the base build price; selling refunds half of that level
+  const { r, human, A } = setup();
+  const as = (m) => r.handle({ player: human, ws: {} }, m);
+  for (const i of A) own(r, i, human);
+  r.settings.maxHotels = 3; r.phase = 'playing'; r.turnIdx = r.players.indexOf(human); r.tp = 'roll';
+  const base = houseCost(r.tiles[A[0]].price), paid = [];
+  for (let n = 0; n < 7; n++) { const before = human.money = 100000; as({ type: 'build', tile: A[0] }); paid.push(before - human.money); }
+  check(paid.join() === [1, 1, 1, 1, 1, 2, 3].map((k) => k * base).join(), `build costs ${paid}`);
+  human.money = 0; as({ type: 'sellHouse', tile: A[0] });
+  check(human.money === 3 * base / 2, 'selling the 3rd hotel refunds half its cost');
+}
+{ // trades weigh rent: an airport whose landing counter has climbed is worth far more than its price
+  const { r, human, bot, other } = setup();
+  const ports = r.tiles.filter((t) => t.type === 'airport').map((t) => t.i), price = r.tiles[ports[0]].price;
+  own(r, ports[0], bot);
+  human.money = 100000;
+  const offer = trade(human, bot, { money: price * 3 }, { props: [ports[0]] });
+  check(r.botWantsTrade(offer).ok, 'three times the price buys a plain airport');
+  r.settings.airportRepeat = true; r.settings.airportShared = false; r.owned[ports[0]].visits = 5;
+  check(!r.botWantsTrade(offer).ok, 'not an airport whose own counter is high');
+  r.settings.airportShared = true; r.owned[ports[0]].visits = 0; own(r, ports[1], human); human.airportVisits = 6;
+  check(!r.botWantsTrade(offer).ok, "not one that joins the rival's high shared counter");
+  r.settings.airportRepeat = false; own(r, ports[1], other); own(r, ports[2], bot);
+  check(!r.botWantsTrade(offer).ok, 'not one that halves the rent of its other airport');
+  r.settings.teams = 2; [human.team, bot.team] = [1, 1];
+  check(r.botWantsTrade(trade(human, bot, {}, { props: [ports[0]] })).ok, "a teammate's offer is taken");
+}
+{ // team help: a bot covers a teammate's debt and hands over the last city of their set
+  const { r, human, bot, other, A, B } = setup();
+  r.phase = 'playing';
+  human.money = -300; bot.money = 1000; other.money = -500;
+  check(!r.botHelpTeam(), 'no help outside a team game');
+  r.settings.teams = 2; [human.team, bot.team, other.team] = [1, 1, 2];
+  check(r.botHelpTeam() && human.money === 0 && bot.money === 700 && other.money === -500, 'the bot pays off its teammate, not the opponent');
+  human.money = -300; bot.money = 250;
+  r.botHelpTeam();
+  check(human.money === -250 && bot.money === 200, 'it keeps $200 for itself');
+  human.money = 100;
+  own(r, A[0], human); own(r, A[1], human); own(r, A[2], bot); own(r, B[0], other); own(r, B[1], other); own(r, B[2], bot);
+  check(r.botHelpTeam() && r.owned[A[2]].owner === human.id, 'it gives a teammate the last city of their set');
+  check(!r.botHelpTeam() && r.owned[B[2]].owner === bot.id, 'never to an opponent');
+}
+{ // a bot offers a person cash for the last city of its set, once
+  const { r, human, bot, other, A, B } = setup();
+  own(r, A[0], bot); own(r, A[1], bot); own(r, A[2], human);
+  own(r, B[0], bot); own(r, B[1], bot); own(r, B[2], other);
+  bot.money = 5000;
+  check(r.botOffer(bot), 'the bot makes an offer');
+  const tr = r.trades[0];
+  check(r.trades.length === 1 && tr.to === human.id && tr.get.props[0] === A[2] && tr.give.money === r.tiles[A[2]].price * 2, 'twice the price for the missing city, to the person');
+  check(!r.botOffer(bot), 'one open offer at a time');
+  r.trades = [];
+  check(!r.botOffer(bot), 'never asks the same owner for the same city twice');
+  bot.asked = []; bot.money = r.tiles[A[2]].price * 2 + 100;
+  check(!r.botOffer(bot), 'not when it would leave less than $200');
 }
 console.log(`bot checks passed: ${checks}`);
 process.exit(0);

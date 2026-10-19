@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap } = require('./public/maps.js');
+const { MAPS, rentTable, rentAt, houseCost, builtCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap } = require('./public/maps.js');
 
 const PORT = process.env.PORT || 3000;
 // Test-only: SPEED=40 shrinks every animation/bot delay so a scripted game finishes in seconds.
@@ -54,6 +54,16 @@ function saveStats() {
   }
 }
 saveStats();
+// Every finished (or abandoned) game is written to <stats folder>/log/<start date_time>.json.
+const LOG_DIR = path.join(path.dirname(STATS_FILES[0]), 'log');
+function saveGameLog(name, game) {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const data = JSON.stringify(game, null, 1);
+    try { fs.writeFileSync(path.join(LOG_DIR, `${name}.json`), data, { flag: 'wx' }); }
+    catch { fs.writeFileSync(path.join(LOG_DIR, `${name}_${game.room}.json`), data); }   // two rooms started in the same second
+  } catch (e) { console.error('Could not save game log', e.message); }
+}
 function statsList() {
   return Object.values(STATS).sort((a, b) => b.wins - a.wins || b.games - a.games || a.name.localeCompare(b.name));
 }
@@ -61,6 +71,8 @@ function statsList() {
 const MORTGAGE_TURNS = 5;
 // Fast game: how long a player in debt has to sell something themselves before the game does it for them.
 const DEBT_GRACE = 10000;
+// Bots value a property's rent as this many landings still to come, on top of its price.
+const TRADE_LANDINGS = 6;
 const PASS_START = 200;
 const LAND_START = 300;
 
@@ -122,7 +134,7 @@ class Room {
     this.settings = {
       maxPlayers: 4, map: 'classic', doubleRent: true, vacationCash: true, auction: false,
       noRentInPrison: true, mortgage: false, evenBuild: false, startingCash: 3000, randomOrder: true,
-      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false, airportShared: true, airportSelf: false, airportCap: 3200, fastGame: false,
+      moveAfterPrison: false, vacationSkip: true, maxHotels: 1, airportRepeat: false, airportShared: true, airportSelf: false, airportCap: 3200, fastGame: false, teams: 0, teamNoRent: true, teamSets: true,
     };
     this.chat = [];
     this.timers = new Set();
@@ -152,6 +164,8 @@ class Room {
     this.card = null;
     this.move = null;
     this.winner = null;
+    this.winTeam = null;
+    this.tie = null;
     this.log = [];
     this.decks = { surprise: [], treasure: [] };
   }
@@ -166,7 +180,9 @@ class Room {
   isTurn(p) { return this.phase === 'playing' && p && this.cur() === p && !p.bankrupt; }
   P(p) { return { p: p.id, n: p.name, c: p.color }; }
   TL(i) { return { t: i, n: this.tiles[i].name }; }
-  say(...parts) { this.log.push({ id: ++this.logId, parts }); if (this.log.length > 60) this.log.shift(); }
+  say(...parts) {
+    if (this.history) this.history.push({ t: Date.now(), text: parts.map((x) => (typeof x === 'string' ? x : x.n)).join('') });
+    this.log.push({ id: ++this.logId, parts }); if (this.log.length > 60) this.log.shift(); }
   err(client, msg) { if (client) send(client.ws, { type: 'error', msg }); }
 
   after(ms, fn) {
@@ -186,7 +202,9 @@ class Room {
     const t = this.tiles[i];
     return this.tiles.filter((x) => x.type === t.type && (t.type !== 'city' || x.cc === t.cc)).map((x) => x.i);
   }
-  ownsSet(pid, i) { return this.setOf(i).every((j) => this.owned[j] && this.owned[j].owner === pid); }
+  // In a team game teammates share sets: a set held between them counts as full for each of them.
+  side(pid) { const p = this.settings.teams && this.settings.teamSets && this.byId(pid); return p ? `team${p.team}` : pid; }
+  ownsSet(pid, i) { return this.setOf(i).every((j) => this.owned[j] && this.side(this.owned[j].owner) === this.side(pid)); }
   propsOf(p) { return Object.keys(this.owned).map(Number).filter((i) => this.owned[i].owner === p.id); }
 
   rent(i, diceSum) {
@@ -196,7 +214,7 @@ class Room {
       if (o.houses > 0) return rentAt(t.price, o.houses);
       return this.settings.doubleRent && this.ownsSet(o.owner, i) ? table[0] * 2 : table[0];
     }
-    const n = this.setOf(i).filter((j) => this.owned[j] && this.owned[j].owner === o.owner).length;
+    const n = this.setOf(i).filter((j) => this.owned[j] && this.side(this.owned[j].owner) === this.side(o.owner)).length;
     if (t.type === 'airport') {
       if (!this.settings.airportRepeat) return AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1];
       // Per-landing rule: the count is shared by all of the owner's airports, or kept per airport.
@@ -216,20 +234,20 @@ class Room {
   // ---------- state sync ----------
   state() {
     return {
-      seq: ++this.seq, ver: 8, build: BUILD, emote: this.emote || null,
+      seq: ++this.seq, ver: 10, build: BUILD, emote: this.emote || null,
       debt: this.debt ? { pid: this.debt.pid, endsIn: Math.max(0, this.debt.endsAt - Date.now()) } : null,
       code: this.code, hostId: this.hostId, phase: this.phase, settings: this.settings,
       mapId: this.mapId, tiles: this.settings.map === 'generated' ? this.tiles : null, mapSeed: this.mapSeed || 0,
       players: this.players.map((p) => ({
         id: p.id, name: p.name, color: p.color, money: p.money, pos: p.pos, inJail: p.inJail, jailTurns: p.jailTurns,
-        pardons: p.pardons, bankrupt: p.bankrupt, bot: p.bot, connected: p.connected, skip: !!p.skip, av: p.airportVisits || 0,
+        pardons: p.pardons, bankrupt: p.bankrupt, bot: p.bot, connected: p.connected, skip: !!p.skip, av: p.airportVisits || 0, team: p.team,
       })),
       turn: this.phase === 'playing' && this.cur() ? this.cur().id : null,
       tp: this.tp, again: this.again, dice: this.dice, rollId: this.rollId,
       owned: this.owned, pot: this.pot, log: this.log.slice(-40), chat: this.chat.slice(-80),
       trades: this.trades,
       auction: this.auction && { ...this.auction, endsIn: Math.max(0, this.auction.endsAt - Date.now()) },
-      card: this.card, move: this.move, winner: this.winner,
+      card: this.card, move: this.move, winner: this.winner, winTeam: this.winTeam, tie: this.tie,
       stats: this.phase === 'over' ? this.players.filter((p) => !p.bot).map((p) => STATS[p.name.toLowerCase()]).filter(Boolean) : null,
     };
   }
@@ -260,11 +278,20 @@ class Room {
       id: crypto.randomBytes(4).toString('hex'), token: crypto.randomBytes(12).toString('hex'),
       name, color, money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0,
       bankrupt: false, bot: !!bot, connected: true, doubles: 0, skip: false, airportVisits: 0,
+      team: this.smallestTeam(),
     };
     this.players.push(p);
     if (!this.hostId && !bot) this.hostId = p.id;
     this.say(this.P(p), ' joined the game');
     return p;
+  }
+
+  // The team (1 to the room's team count) with the fewest players; ties go to the lowest number.
+  smallestTeam() {
+    const n = this.settings.teams || 2, size = (k) => this.players.filter((x) => x.team === k).length;
+    let best = 1;
+    for (let k = 2; k <= n; k++) if (size(k) < size(best)) best = k;
+    return best;
   }
 
   removePlayer(p) {
@@ -289,7 +316,7 @@ class Room {
       this.mapSeed = ++this.uid;
     }
     if (this.settings.randomOrder) shuffle(this.players);
-    for (const p of this.players) Object.assign(p, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false, airportVisits: 0 });
+    for (const p of this.players) Object.assign(p, { money: this.settings.startingCash, pos: 0, inJail: false, jailTurns: 0, pardons: 0, bankrupt: false, doubles: 0, skip: false, airportVisits: 0, asked: [] });
     const keepLog = this.log;
     this.resetGame();
     this.log = keepLog;
@@ -299,6 +326,8 @@ class Room {
       treasure: TREASURE,
     };
     this.phase = 'playing';
+    this.startedAt = new Date();
+    this.history = [];
     if (this.settings.map === 'random') this.say(`Random map: ${MAPS[this.pickedMap].name}`);
     this.say(`Game started${this.settings.randomOrder ? ' with a randomized players order' : ''}. Good luck!`);
   }
@@ -433,6 +462,10 @@ class Room {
           if (repeat && this.settings.airportSelf) { bumpAirport(); this.say(this.P(p), ' landed on their own airport and raised its rent'); }
           break;
         }
+        if (this.settings.teams && this.settings.teamNoRent && owner.team === p.team) {
+          this.say(this.P(p), ' pays no rent to teammate ', this.P(owner));
+          break;
+        }
         if (this.settings.noRentInPrison && owner.inJail) {
           this.say(this.P(p), ' pays no rent: ', this.P(owner), ' is in prison');
           break;
@@ -483,7 +516,7 @@ class Room {
   autoSell(p) {
     if (!p || p.bankrupt || p.money >= 0) return;
     const rentNow = (i) => this.rent(i, 7);
-    const blocked = (i) => this.tiles[i].type === 'city' && this.setOf(i).some((j) => this.owned[j] && this.owned[j].owner !== p.id);
+    const blocked = (i) => this.tiles[i].type === 'city' && this.setOf(i).some((j) => this.owned[j] && this.side(this.owned[j].owner) !== this.side(p.id));
     const sold = [], trimmed = {};
     const sellProp = (i) => {
       const amount = this.tiles[i].price / 2;
@@ -502,8 +535,8 @@ class Room {
       const built = mine.filter((i) => this.owned[i].houses > 0);
       if (built.length) {
         const i = built.sort((a, b) => this.owned[b].houses - this.owned[a].houses || this.tiles[a].price - this.tiles[b].price)[0];
+        p.money += houseCost(this.tiles[i].price, this.owned[i].houses) / 2;
         this.owned[i].houses--;
-        p.money += houseCost(this.tiles[i].price) / 2;
         trimmed[i] = (trimmed[i] || 0) + 1;
         continue;
       }
@@ -528,11 +561,11 @@ class Room {
         const set = this.setOf(i);
         if (set.some((j) => this.owned[j].mortgaged)) return false;
         if (this.settings.evenBuild && o.houses > Math.min(...set.map((j) => this.owned[j].houses))) return false;
-        return p.money >= houseCost(t.price);
+        return p.money >= houseCost(t.price, o.houses + 1);
       });
       if (!options.length) break;
       const i = options.sort((a, b) => this.owned[a].houses - this.owned[b].houses || this.tiles[b].price - this.tiles[a].price)[0];
-      p.money -= houseCost(this.tiles[i].price);
+      p.money -= houseCost(this.tiles[i].price, this.owned[i].houses + 1);
       this.owned[i].houses++;
       added[i] = true;
     }
@@ -637,7 +670,7 @@ class Room {
     const score = (i) => {
       const t = this.tiles[i], o = this.owned[i];
       if (!o) return p.money >= t.price ? 1e6 + this.stake(p.id, i) * 1e4 + t.price : -rentTable(t.price)[0];
-      if (o.owner === p.id || o.mortgaged) return 5e5;
+      if (this.side(o.owner) === this.side(p.id) || o.mortgaged) return 5e5;
       return -this.rent(i, 7);
     };
     return this.tiles.filter((t) => t.type === 'city').map((t) => t.i).sort((x, y) => score(y) - score(x))[0];
@@ -733,13 +766,15 @@ class Room {
     this.trades = this.trades.filter((t) => t.from !== p.id && t.to !== p.id);
     if (this.auction && this.auction.bidder === p.id) { this.auction.bidder = null; this.auction.bid = 0; }
     this.say(this.P(p), ' went bankrupt');
-    const left = this.active();
-    if (left.length <= 1) {
+    this.tie = null;
+    const left = this.active().sort((a, b) => b.money - a.money);
+    if (left.length <= 1 || (this.settings.teams && left.every((x) => x.team === left[0].team))) {
       this.epoch++;
       this.phase = 'over';
       this.auction = null;
-      this.winner = left[0] ? left[0].id : null;
-      if (left[0]) this.say(this.P(left[0]), ' won the game! 🏆');
+      this.winner = left[0] ? left[0].id : null;   // in a team game, the richest player of the winning team
+      if (this.settings.teams && left[0]) { this.winTeam = left[0].team; this.say(`Team ${left[0].team} won the game! 🏆`); }
+      else if (left[0]) this.say(this.P(left[0]), ' won the game! 🏆');
       this.recordStats();
       return this.broadcast();
     }
@@ -747,15 +782,40 @@ class Room {
     this.broadcast();
   }
 
+  tieCheck() {
+    if (this.active().some((x) => !x.bot && !this.tie.yes.includes(x.id))) return this.broadcast();
+    this.epoch++;
+    this.phase = 'over';
+    this.auction = null;
+    this.say('The game ended in a tie 🤝');
+    this.recordStats();
+    this.broadcast();
+  }
+
   // Every person (not bot) still seated when the game ends gets a game; the last one standing gets the win.
+  // A game with fewer than two people (one person against bots) is logged but not counted.
   recordStats() {
+    const counted = this.players.filter((p) => !p.bot).length >= 2;
+    this.saveLog(this.tie ? 'tie' : 'win', counted);
+    if (!counted) return;
     for (const p of this.players) {
       if (p.bot) continue;
       const k = p.name.toLowerCase(), r = STATS[k] ||= { name: p.name, games: 0, wins: 0, best: 0, last: 0 };
       r.games++; r.last = Date.now();
-      if (p.id === this.winner) { r.wins++; r.best = Math.max(r.best, p.money); }
+      if (this.winTeam ? p.team === this.winTeam : p.id === this.winner) { r.wins++; r.best = Math.max(r.best, p.money); }
     }
     saveStats();
+  }
+
+  saveLog(result, counted) {
+    const d = this.startedAt, two = (n) => String(n).padStart(2, '0');
+    saveGameLog(`${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}_${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}`, {
+      room: this.code, startedAt: d.toISOString(), endedAt: new Date().toISOString(), result, counted,
+      winner: result === 'win' && this.byId(this.winner) ? this.byId(this.winner).name : null, winTeam: this.winTeam,
+      map: this.mapId, settings: this.settings,
+      players: this.players.map((p) => ({ name: p.name, bot: p.bot, team: this.settings.teams ? p.team : undefined, money: p.money, bankrupt: p.bankrupt, properties: this.propsOf(p).length })),
+      log: this.history,
+    });
   }
 
   // ---------- property management ----------
@@ -765,7 +825,7 @@ class Room {
     if (!t || !o || o.owner !== p.id) return this.err(client, 'You do not own this property');
     const set = this.setOf(i);
     const setHouses = set.map((j) => (this.owned[j] ? this.owned[j].houses : 0));
-    const cost = houseCost(t.price);
+    const cost = houseCost(t.price, o && o.houses + 1);
     switch (kind) {
       case 'build':
         if (t.type !== 'city') return this.err(client, 'You can build only on cities');
@@ -780,7 +840,7 @@ class Room {
       case 'sellHouse':
         if (!o.houses) return;
         if (this.settings.evenBuild && o.houses < Math.max(...setHouses)) return this.err(client, 'Sell evenly across the set');
-        o.houses--; p.money += cost / 2;
+        p.money += houseCost(t.price, o.houses) / 2; o.houses--;
         this.say(this.P(p), ' downgraded ', this.TL(i));
         break;
       case 'mortgage':
@@ -851,7 +911,8 @@ class Room {
   // rest of a set ranks above completing the bot's own set: an opponent's full set is what loses games.
   // `owner` maps a tile to its owner id, so a trade can be scored on the ownership it would leave behind.
   stake(pid, i, owner = (j) => this.owned[j] && this.owned[j].owner) {
-    const others = this.setOf(i).filter((j) => j !== i).map(owner);
+    pid = this.side(pid);
+    const others = this.setOf(i).filter((j) => j !== i).map((j) => owner(j) && this.side(owner(j)));
     if (!others.length) return 1;
     const rival = others.find((o) => o && o !== pid);
     const onlyRival = rival && others.every((o) => !o || o === rival);
@@ -862,18 +923,44 @@ class Room {
     return 1;
   }
 
-  // A bot's answer to a trade offered to it. It never hands an opponent a full set, whatever the price;
-  // otherwise each property is weighed by its stake, on both sides, and the bot wants a margin on top.
+  // Rent per landing that tile i's group (its city set, or every airport or company) earns `pid`'s side,
+  // with `owner` mapping a tile to its owner id. Counts the full-set bonus, the airport and company count,
+  // and the per-landing airport counters (the owner's own when shared, the airport's own otherwise).
+  groupRent(pid, i, owner) {
+    const set = this.setOf(i), ours = set.filter((j) => owner(j) && this.side(owner(j)) === this.side(pid));
+    const t = this.tiles[i], n = ours.length;
+    if (!n) return 0;
+    if (t.type === 'city') {
+      const full = this.settings.doubleRent && n === set.length ? 2 : 1;
+      return ours.reduce((sum, j) => sum + rentTable(this.tiles[j].price)[0] * full, 0);
+    }
+    if (t.type === 'company') return n * COMPANY_MULT[Math.min(n, COMPANY_MULT.length) - 1] * 7;
+    if (!this.settings.airportRepeat) return n * AIRPORT_RENT[Math.min(n, AIRPORT_RENT.length) - 1];
+    return ours.reduce((sum, j) => sum + airportVisitRent(
+      this.settings.airportShared ? this.byId(owner(j)).airportVisits || 0 : this.owned[j].visits || 0, this.settings.airportCap), 0);
+  }
+
+  // What tile i is worth to `pid` under the ownership `owner`: its price weighed by its stake,
+  // plus the rent the whole group gains from it over the landings still to come.
+  tileWorth(pid, i, owner) {
+    const without = (j) => (j === i ? null : owner(j));
+    return this.tiles[i].price * this.stake(pid, i, owner) + TRADE_LANDINGS * (this.groupRent(pid, i, owner) - this.groupRent(pid, i, without));
+  }
+
+  // A bot's answer to a trade offered to it. A teammate's offer is always taken: the team plans together.
+  // It never hands an opponent a full set, whatever the price; otherwise each property is weighed by
+  // what it is worth to the bot and to the rival, and the bot wants a margin on top.
   botWantsTrade(tr) {
     if (!this.validTrade(tr)) return { ok: false };
     const bot = tr.to, rival = tr.from;
+    if (this.settings.teams && this.byId(bot).team === this.byId(rival).team) return { ok: true };
     const now = (j) => this.owned[j] && this.owned[j].owner;
     const after = (j) => (tr.give.props.includes(j) ? bot : tr.get.props.includes(j) ? rival : now(j));
-    const completes = tr.get.props.some((i) => !this.setOf(i).every((j) => now(j) === rival) && this.setOf(i).every((j) => after(j) === rival));
+    const theirs = (j, f) => f(j) && this.side(f(j)) === this.side(rival);
+    const completes = tr.get.props.some((i) => !this.setOf(i).every((j) => theirs(j, now)) && this.setOf(i).every((j) => theirs(j, after)));
     if (completes) return { ok: false, why: 'it would complete their set' };
-    const price = (i) => this.tiles[i].price;
-    const gain = tr.give.money + tr.give.props.reduce((sum, i) => sum + price(i) * this.stake(bot, i, after), 0);
-    const cost = tr.get.money + tr.get.props.reduce((sum, i) => sum + price(i) * Math.max(this.stake(bot, i, now), this.stake(rival, i, after)), 0);
+    const gain = tr.give.money + tr.give.props.reduce((sum, i) => sum + this.tileWorth(bot, i, after), 0);
+    const cost = tr.get.money + tr.get.props.reduce((sum, i) => sum + Math.max(this.tileWorth(bot, i, now), this.tileWorth(rival, i, after)), 0);
     return { ok: gain >= cost * 1.15 };
   }
 
@@ -882,7 +969,7 @@ class Room {
     while (p.money < 0 && guard-- > 0) {
       const mine = this.propsOf(p);
       const withHouse = mine.filter((i) => this.owned[i].houses > 0).sort((x, y) => this.owned[y].houses - this.owned[x].houses)[0];
-      if (withHouse !== undefined) { this.owned[withHouse].houses--; p.money += houseCost(this.tiles[withHouse].price) / 2; continue; }
+      if (withHouse !== undefined) { p.money += houseCost(this.tiles[withHouse].price, this.owned[withHouse].houses--) / 2; continue; }
       // give up the least strategic property first, so blocking tiles are the last to go
       const worth = (i) => this.tiles[i].price * this.stake(p.id, i);
       const free = mine.filter((i) => !this.owned[i].mortgaged).sort((x, y) => worth(x) - worth(y))[0];
@@ -894,21 +981,70 @@ class Room {
   }
 
   botBuild(p) {
-    for (let n = 0; n < 3; n++) {
+    for (;;) {
       const options = this.propsOf(p).filter((i) => {
         const t = this.tiles[i], o = this.owned[i];
         if (t.type !== 'city' || o.houses >= 4 + this.settings.maxHotels || !this.ownsSet(p.id, i)) return false;
         const set = this.setOf(i);
         if (set.some((j) => this.owned[j].mortgaged)) return false;
         if (this.settings.evenBuild && o.houses > Math.min(...set.map((j) => this.owned[j].houses))) return false;
-        return p.money - houseCost(t.price) >= 250;
+        return p.money - houseCost(t.price, o.houses + 1) >= 250;
       });
       if (!options.length) return;
       const i = options.sort((x, y) => this.tiles[y].price - this.tiles[x].price)[0];
-      p.money -= houseCost(this.tiles[i].price);
+      p.money -= houseCost(this.tiles[i].price, this.owned[i].houses + 1);
       this.owned[i].houses++;
       this.say(this.P(p), this.owned[i].houses >= 5 ? ' built a hotel in ' : ' built a house in ', this.TL(i));
     }
+  }
+
+  // Team play: a bot covers a teammate's debt from its spare cash (keeping $200), or hands a teammate the
+  // last city of a set they hold the rest of. One gift per tick, like every other bot action.
+  botHelpTeam() {
+    if (!this.settings.teams) return false;
+    for (const b of this.active().filter((x) => x.bot)) {
+      const mates = this.active().filter((x) => x !== b && x.team === b.team);
+      const broke = mates.find((m) => m.money < 0);
+      const give = broke && Math.min(-broke.money, b.money - 200);
+      if (give > 0) {
+        b.money -= give; broke.money += give;
+        this.say(this.P(b), ` gave $${give} to teammate `, this.P(broke));
+        return true;
+      }
+      for (const i of this.propsOf(b)) {
+        if (this.tiles[i].type !== 'city' || this.owned[i].mortgaged) continue;
+        const rest = this.setOf(i).filter((j) => j !== i);
+        if (this.setOf(i).some((j) => this.owned[j] && this.owned[j].houses > 0)) continue;
+        const m = rest.length && mates.find((x) => rest.every((j) => this.owned[j] && this.owned[j].owner === x.id));
+        if (!m) continue;
+        this.owned[i].owner = m.id;
+        this.say(this.P(b), ' gave ', this.TL(i), ' to teammate ', this.P(m), ' to complete their set');
+        this.noteSet(m, i);
+        this.trades = this.trades.filter((t) => this.validTrade(t));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // On its turn a bot that holds all but one city of a set offers a person who owns the last one
+  // twice its price (if it can spare that and keep $200). It asks each owner for each city once per game.
+  botOffer(p) {
+    if (this.trades.some((t) => t.from === p.id)) return false;
+    for (const i of Object.keys(this.owned).map(Number)) {
+      const o = this.owned[i], owner = this.byId(o.owner);
+      if (this.tiles[i].type !== 'city' || !owner || owner.bot || this.side(owner.id) === this.side(p.id)) continue;
+      if (!this.setOf(i).every((j) => j === i || (this.owned[j] && this.side(this.owned[j].owner) === this.side(p.id)))) continue;
+      const key = `${i}:${owner.id}`, money = Math.floor(this.tiles[i].price * 2 / 10) * 10;
+      if ((p.asked ||= []).includes(key) || p.money - money < 200) continue;
+      const tr = { id: crypto.randomBytes(4).toString('hex'), from: p.id, to: owner.id, give: { money, props: [] }, get: { money: 0, props: [i] } };
+      if (!this.validTrade(tr)) continue;
+      p.asked.push(key);
+      this.trades.push(tr);
+      this.say(this.P(p), ' offered a trade to ', this.P(owner));
+      return true;
+    }
+    return false;
   }
 
   botTick() {
@@ -936,8 +1072,10 @@ class Room {
       }
       return;
     }
+    if (this.botHelpTeam()) return this.broadcast();
     const p = this.cur();
     if (!p || !p.bot || p.bankrupt) return;
+    if (this.tp === 'roll' && this.botOffer(p)) return this.broadcast();
     if (this.tp === 'roll') {
       if (p.money < 0 && !this.raiseFunds(p)) return this.bankrupt(p);
       const jailed = p.inJail;
@@ -1009,10 +1147,15 @@ class Room {
       case 'setting': {
         if (!host || this.phase !== 'lobby') return;
         const s = this.settings, v = m.value;
-        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'airportShared', 'airportSelf', 'vacationSkip', 'fastGame'];
+        const bools = ['doubleRent', 'vacationCash', 'auction', 'noRentInPrison', 'mortgage', 'evenBuild', 'randomOrder', 'moveAfterPrison', 'airportRepeat', 'airportShared', 'airportSelf', 'vacationSkip', 'fastGame', 'teamNoRent', 'teamSets'];
         if (bools.includes(m.key)) s[m.key] = !!v;
         else if (m.key === 'maxPlayers' && Number.isInteger(v) && v >= 2 && v <= 8 && v >= this.players.length) s.maxPlayers = v;
         else if (m.key === 'startingCash' && [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000].includes(v)) s.startingCash = v;
+        else if (m.key === 'teams' && [0, 2, 3, 4].includes(v)) {
+          s.teams = v;
+          // players on a team that no longer exists move to the smallest remaining one
+          for (const x of this.players) if (x.team > (v || 2)) { x.team = 0; x.team = this.smallestTeam(); }
+        }
         else if (m.key === 'maxHotels' && [1, 2, 3, 4, 5].includes(v)) s.maxHotels = v;
         else if (m.key === 'airportCap' && AIRPORT_CAPS.includes(v)) s.airportCap = v;
         else if (m.key === 'map' && MAPS[v]) {
@@ -1030,6 +1173,13 @@ class Room {
         let name;
         do { name = `${BOT_A[rnd(BOT_A.length)]} ${BOT_B[rnd(BOT_B.length)]}`; } while (this.players.some((x) => x.name === name));
         this.addPlayer(name, color, true);
+        return this.broadcast();
+      }
+      case 'team': {
+        // In the lobby a player switches their own team; the host can move anyone, bots included.
+        const target = this.byId(m.id);
+        if (!target || this.phase !== 'lobby' || !Number.isInteger(m.team) || m.team < 1 || m.team > this.settings.teams || (target !== p && !host)) return;
+        target.team = m.team;
         return this.broadcast();
       }
       case 'passHost': {
@@ -1050,6 +1200,7 @@ class Room {
       case 'start':
         if (!host || this.phase !== 'lobby') return;
         if (this.players.length < 2) return this.err(client, 'You need at least 2 players (add a bot or invite a friend)');
+        if (this.settings.teams && new Set(this.players.map((x) => x.team)).size < 2) return this.err(client, 'Players need to be on at least two different teams');
         this.start();
         return this.broadcast();
       case 'lobby':
@@ -1107,7 +1258,7 @@ class Room {
         let total = 0;
         for (const i of mine) {
           const o = this.owned[i], t = this.tiles[i];
-          total += (o.houses * houseCost(t.price)) / 2 + (o.mortgaged ? 0 : t.price / 2);
+          total += builtCost(t.price, o.houses) / 2 + (o.mortgaged ? 0 : t.price / 2);
           delete this.owned[i];
         }
         p.money += total;
@@ -1117,6 +1268,21 @@ class Room {
       case 'bankrupt':
         if (myTurn && this.tp === 'busy') return;
         return this.bankrupt(p);
+      case 'tieOffer':
+        // Every other person still in the game must accept; bots do not get a say.
+        if (p.bot || this.tie) return;
+        this.tie = { from: p.id, yes: [p.id] };
+        this.say(this.P(p), ' proposed a tie');
+        return this.tieCheck();
+      case 'tieAccept':
+        if (!this.tie || this.tie.yes.includes(p.id)) return;
+        this.tie.yes.push(p.id);
+        return this.tieCheck();
+      case 'tieDecline':
+        if (!this.tie) return;
+        this.say(this.P(p), this.tie.from === p.id ? ' withdrew the tie' : ' declined the tie');
+        this.tie = null;
+        return this.broadcast();
       case 'trade': {
         const clean = (s) => ({
           money: Math.max(0, Math.floor(Number(s && s.money) || 0)),
@@ -1263,6 +1429,7 @@ setInterval(() => {
   }
   for (const [code, room] of rooms) {
     if (room.clients.size === 0 && Date.now() - room.lastActive > 30 * 60 * 1000) {
+      if (room.phase === 'playing') room.saveLog('abandoned', false);
       room.resetGame();
       clearTimeout(room.botTimer);
       rooms.delete(code);

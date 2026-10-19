@@ -199,7 +199,10 @@
     const t = rentTable(price);
     return level <= 5 ? t[level] : Math.round((t[5] * (1 + 0.5 * (level - 5))) / 5) * 5;
   }
-  function houseCost(price) { return price < 130 ? 50 : price < 210 ? 100 : price < 290 ? 150 : price < 450 ? 200 : price < 900 ? 300 : 400; }
+  // Cost of building level `level` (1-4 houses, 5+ hotels): houses cost the base price, the nth hotel n times it.
+  function houseCost(price, level = 1) { return (price < 130 ? 50 : price < 210 ? 100 : price < 290 ? 150 : price < 450 ? 200 : price < 900 ? 300 : 400) * Math.max(1, level - 4); }
+  // What all the buildings on a city cost together.
+  function builtCost(price, houses) { let sum = 0; for (let k = 1; k <= houses; k++) sum += houseCost(price, k); return sum; }
   // Airport rent doubles with every airport the owner holds.
   const AIRPORT_RENT = [25, 50, 100, 200, 400, 800, 1600, 3200];
   // Alternative rule: rent starts at $25 and doubles with every paid landing, up to a cap the room chooses.
@@ -207,7 +210,7 @@
   const airportVisitRent = (visits, cap) => Math.min(cap || 3200, 25 * 2 ** visits);
   const COMPANY_MULT = [4, 10, 20, 40, 70, 100];
 
-  const api = { MAPS, rentTable, rentAt, houseCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap };
+  const api = { MAPS, rentTable, rentAt, houseCost, builtCost, AIRPORT_RENT, AIRPORT_CAPS, airportVisitRent, COMPANY_MULT, randomMap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else Object.assign(root, api);
 })(typeof self !== 'undefined' ? self : this);
